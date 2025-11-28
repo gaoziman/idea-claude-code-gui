@@ -1,3 +1,8 @@
+/**
+ * EditToolBlock - 编辑文件工具卡片组件
+ * 使用新的 ToolExecutionCard 风格，展示 diff 视图
+ */
+
 import { useState } from 'react';
 import type { ToolInput } from '../../types';
 import { getFileName } from '../../utils/helpers';
@@ -9,7 +14,7 @@ interface EditToolBlockProps {
 }
 
 const EditToolBlock = ({ name, input }: EditToolBlockProps) => {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
   if (!input) {
     return null;
@@ -29,141 +34,86 @@ const EditToolBlock = ({ name, input }: EditToolBlockProps) => {
 
   const oldLines = oldString ? oldString.split('\n') : [];
   const newLines = newString ? newString.split('\n') : [];
+  const fileName = getFileName(filePath);
+
+  // 构建变更摘要
+  const changesSummary = [];
+  if (newLines.length > 0) {
+    changesSummary.push(`+${newLines.length}`);
+  }
+  if (oldLines.length > 0) {
+    changesSummary.push(`-${oldLines.length}`);
+  }
 
   return (
-    <div className="task-container">
-      <div className="task-header" onClick={() => setExpanded((prev) => !prev)}>
-        <div className="task-title-section">
-          <div
-            className="task-icon-wrapper"
-            style={{
-              width: '20px',
-              height: '20px',
-              background: 'rgba(100, 181, 246, 0.15)',
-              marginRight: '4px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '4px',
-            }}
-          >
-            <span className="codicon codicon-edit" style={{ color: '#64b5f6', fontSize: '12px' }} />
-          </div>
-          <span style={{ fontWeight: 600, fontSize: '13px', color: '#90caf9' }}>修改</span>
-          <span
-            style={{
-              color: '#ccc',
-              marginLeft: '8px',
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            {getFileName(filePath) || filePath}
+    <div className="tool-card edit">
+      {/* 头部 */}
+      <div className="tool-card-header" onClick={() => setExpanded(!expanded)}>
+        <div className="tool-card-header-left">
+          <span className="tool-card-icon edit">
+            <span className="codicon codicon-edit" />
           </span>
-          {(oldLines.length > 0 || newLines.length > 0) && (
-            <span
-              style={{
-                marginLeft: '12px',
-                fontSize: '12px',
-                fontFamily: "'JetBrains Mono', monospace",
-                fontWeight: 600,
-              }}
-            >
-              {newLines.length > 0 && <span style={{ color: '#89d185' }}>+{newLines.length}</span>}
-              {newLines.length > 0 && oldLines.length > 0 && <span style={{ margin: '0 4px' }} />}
-              {oldLines.length > 0 && <span style={{ color: '#ff6b6b' }}>-{oldLines.length}</span>}
-            </span>
-          )}
+          <div className="tool-card-info">
+            <div className="tool-card-title">
+              <span className="tool-card-type">修改</span>
+              <span className="tool-card-file">{fileName || filePath}</span>
+              {changesSummary.length > 0 && !expanded && (
+                <span className="tool-card-changes">
+                  {newLines.length > 0 && (
+                    <span className="changes-add">+{newLines.length}</span>
+                  )}
+                  {oldLines.length > 0 && (
+                    <span className="changes-del">-{oldLines.length}</span>
+                  )}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
-        <span
-          className={`codicon codicon-chevron-${expanded ? 'up' : 'down'}`}
-          style={{ color: '#858585' }}
-        />
+
+        <div className="tool-card-header-right">
+          <span className="tool-card-status success" />
+          <span className={`tool-card-toggle codicon codicon-chevron-down ${expanded ? 'expanded' : ''}`} />
+        </div>
       </div>
 
+      {/* 展开内容 - Diff 视图 */}
       {expanded && (
-        <div className="task-details" style={{ padding: 0, borderTop: '1px solid #333' }}>
-          <div
-            style={{
-              fontFamily: "'JetBrains Mono', 'Consolas', monospace",
-              fontSize: '12px',
-              lineHeight: 1.5,
-              overflowX: 'auto',
-              background: '#1e1e1e',
-            }}
-          >
-            {oldLines.map((line, index) => (
-              <div
-                key={`old-${index}`}
-                style={{
-                  display: 'flex',
-                  background: 'rgba(80, 20, 20, 0.3)',
-                  color: '#ccc',
-                  minWidth: '100%',
-                }}
-              >
-                <div
-                  style={{
-                    width: '40px',
-                    textAlign: 'right',
-                    paddingRight: '10px',
-                    color: '#666',
-                    userSelect: 'none',
-                    borderRight: '1px solid #333',
-                    background: '#252526',
-                  }}
-                />
-                <div
-                  style={{
-                    width: '24px',
-                    textAlign: 'center',
-                    color: '#ff6b6b',
-                    userSelect: 'none',
-                    background: 'rgba(80, 20, 20, 0.2)',
-                    opacity: 0.7,
-                  }}
-                >
-                  -
-                </div>
-                <div style={{ whiteSpace: 'pre', paddingLeft: '4px', flex: 1 }}>{line}</div>
-              </div>
-            ))}
+        <div className="tool-card-content">
+          <div className="tool-card-content-inner">
+            {/* 文件路径 */}
+            <div className="diff-header">
+              <span className="diff-file-path">{filePath}</span>
+              <span className="diff-stats">
+                {newLines.length > 0 && (
+                  <span className="diff-stat-add">+{newLines.length}</span>
+                )}
+                {oldLines.length > 0 && (
+                  <span className="diff-stat-del">-{oldLines.length}</span>
+                )}
+              </span>
+            </div>
 
-            {newLines.map((line, index) => (
-              <div
-                key={`new-${index}`}
-                style={{
-                  display: 'flex',
-                  background: 'rgba(20, 80, 20, 0.3)',
-                  color: '#ccc',
-                  minWidth: '100%',
-                }}
-              >
-                <div
-                  style={{
-                    width: '40px',
-                    textAlign: 'right',
-                    paddingRight: '10px',
-                    color: '#666',
-                    userSelect: 'none',
-                    borderRight: '1px solid #333',
-                    background: '#252526',
-                  }}
-                />
-                <div
-                  style={{
-                    width: '24px',
-                    textAlign: 'center',
-                    color: '#89d185',
-                    userSelect: 'none',
-                    background: 'rgba(20, 80, 20, 0.2)',
-                    opacity: 0.7,
-                  }}
-                >
-                  +
+            {/* Diff 内容 */}
+            <div className="diff-content">
+              {/* 删除的行 */}
+              {oldLines.map((line, index) => (
+                <div key={`old-${index}`} className="diff-line deletion">
+                  <span className="diff-line-number" />
+                  <span className="diff-line-sign">-</span>
+                  <span className="diff-line-content">{line || ' '}</span>
                 </div>
-                <div style={{ whiteSpace: 'pre', paddingLeft: '4px', flex: 1 }}>{line}</div>
-              </div>
-            ))}
+              ))}
+
+              {/* 添加的行 */}
+              {newLines.map((line, index) => (
+                <div key={`new-${index}`} className="diff-line addition">
+                  <span className="diff-line-number" />
+                  <span className="diff-line-sign">+</span>
+                  <span className="diff-line-content">{line || ' '}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -172,4 +122,3 @@ const EditToolBlock = ({ name, input }: EditToolBlockProps) => {
 };
 
 export default EditToolBlock;
-

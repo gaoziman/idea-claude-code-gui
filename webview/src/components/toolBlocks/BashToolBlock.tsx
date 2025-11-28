@@ -1,3 +1,8 @@
+/**
+ * BashToolBlock - 命令行工具卡片组件
+ * 使用新的 ToolExecutionCard 风格
+ */
+
 import { useState } from 'react';
 import type { ToolInput, ToolResultBlock } from '../../types';
 
@@ -17,12 +22,13 @@ const BashToolBlock = ({ input, result }: BashToolBlockProps) => {
   const command = (input.command as string | undefined) ?? '';
   const description = (input.description as string | undefined) ?? '';
 
-  let status: 'pending' | 'completed' | 'error' = 'pending';
+  // 确定状态
+  let status: 'pending' | 'running' | 'success' | 'error' = 'pending';
   let isError = false;
   let output = '';
 
   if (result) {
-    status = 'completed';
+    status = 'success';
     if (result.is_error) {
       status = 'error';
       isError = true;
@@ -34,117 +40,67 @@ const BashToolBlock = ({ input, result }: BashToolBlockProps) => {
     } else if (Array.isArray(content)) {
       output = content.map((block) => block.text ?? '').join('\n');
     }
+  } else {
+    status = 'running';
   }
 
+  // 获取状态类名
+  const getStatusClass = () => {
+    if (!result) return 'running';
+    return isError ? 'error' : 'success';
+  };
+
   return (
-    <div className="task-container">
-      <div
-        className="task-header"
-        onClick={() => setExpanded((prev) => !prev)}
-        style={{ borderBottom: expanded ? '1px solid #333' : undefined }}
-      >
-        <div className="task-title-section">
-          <div
-            className="task-icon-wrapper"
-            style={{
-              width: '20px',
-              height: '20px',
-              background: 'rgba(100, 181, 246, 0.15)',
-              marginRight: '4px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '4px',
-            }}
-          >
-            <span
-              className="codicon codicon-terminal"
-              style={{ color: '#64b5f6', fontSize: '12px' }}
-            />
+    <div className={`tool-card ${getStatusClass()}`}>
+      {/* 头部 */}
+      <div className="tool-card-header" onClick={() => setExpanded(!expanded)}>
+        <div className="tool-card-header-left">
+          <span className="tool-card-icon bash">
+            <span className="codicon codicon-terminal" />
+          </span>
+          <div className="tool-card-info">
+            <div className="tool-card-title">
+              <span className="tool-card-type">命令行</span>
+              {description && (
+                <span className="tool-card-file">{description}</span>
+              )}
+            </div>
+            {!expanded && command && (
+              <div className="tool-card-subtitle">{command.length > 60 ? command.substring(0, 60) + '...' : command}</div>
+            )}
           </div>
-          <span style={{ fontWeight: 600, fontSize: '13px', color: '#90caf9' }}>命令行</span>
-          {description && (
-            <span style={{ color: '#858585', marginLeft: '8px', fontStyle: 'italic', fontSize: '12px' }}>
-              {description}
-            </span>
-          )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {status !== 'pending' && (
-            <div
-              style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                backgroundColor: isError ? '#ff6b6b' : '#89d185',
-              }}
-            />
-          )}
-          <span
-            className={`codicon codicon-chevron-${expanded ? 'up' : 'down'}`}
-            style={{ color: '#858585' }}
-          />
+        <div className="tool-card-header-right">
+          <span className={`tool-card-status ${status}`} />
+          <span className={`tool-card-toggle codicon codicon-chevron-down ${expanded ? 'expanded' : ''}`} />
         </div>
       </div>
 
+      {/* 展开内容 */}
       {expanded && (
-        <div className="task-details" style={{ padding: 0, border: 'none' }}>
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              background: '#1e1e1e',
-              position: 'relative',
-            }}
-          >
-            <div
-              style={{
-                position: 'absolute',
-                left: '21px',
-                top: 0,
-                bottom: 0,
-                width: '1px',
-                backgroundColor: '#333',
-                zIndex: 0,
-              }}
-            />
-            <div className="task-content-wrapper" style={{ paddingLeft: '40px', position: 'relative', zIndex: 1 }}>
-              <div
-                style={{
-                  background: '#252526',
-                  border: '1px solid #333',
-                  borderRadius: '6px',
-                  padding: '10px 12px',
-                  fontFamily: "'JetBrains Mono', 'Consolas', monospace",
-                  fontSize: '13px',
-                  color: '#cccccc',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                }}
-              >
-                {command}
-              </div>
-
-              {output && (
-                <div
-                  style={{
-                    marginTop: '8px',
-                    fontFamily: "'JetBrains Mono', 'Consolas', monospace",
-                    fontSize: '12px',
-                    color: isError ? '#ff6b6b' : '#858585',
-                    whiteSpace: 'pre-wrap',
-                    display: 'flex',
-                    gap: '6px',
-                  }}
-                >
-                  {isError && (
-                    <span className="codicon codicon-error" style={{ fontSize: '14px', marginTop: '1px' }} />
-                  )}
-                  <span>{output}</span>
-                </div>
-              )}
+        <div className="tool-card-content">
+          <div className="tool-card-content-inner">
+            {/* 命令 */}
+            <div className="bash-command">
+              <span className="bash-prompt">$</span>
+              <span className="bash-command-text">{command}</span>
             </div>
+
+            {/* 输出 */}
+            {output && (
+              <div className={`bash-result ${isError ? 'error' : ''}`}>
+                {output}
+              </div>
+            )}
+
+            {/* 退出码 */}
+            {result && (
+              <div className={`bash-exit-code ${isError ? 'error' : 'success'}`}>
+                <span className={`codicon ${isError ? 'codicon-error' : 'codicon-check'}`} />
+                <span>{isError ? '执行失败' : '执行成功'}</span>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -153,4 +109,3 @@ const BashToolBlock = ({ input, result }: BashToolBlockProps) => {
 };
 
 export default BashToolBlock;
-

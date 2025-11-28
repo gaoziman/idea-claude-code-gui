@@ -1,3 +1,8 @@
+/**
+ * ReadToolBlock - 读取文件工具卡片组件
+ * 使用新的 ToolExecutionCard 风格
+ */
+
 import { useState } from 'react';
 import type { ToolInput } from '../../types';
 import { getFileName } from '../../utils/helpers';
@@ -20,6 +25,7 @@ const ReadToolBlock = ({ input }: ReadToolBlockProps) => {
 
   const fileName = getFileName(filePath);
 
+  // 构建行信息
   let lineInfo = '';
   if (typeof input.offset === 'number' && typeof input.limit === 'number') {
     const startLine = Number(input.offset) + 1;
@@ -27,76 +33,58 @@ const ReadToolBlock = ({ input }: ReadToolBlockProps) => {
     lineInfo = `第 ${startLine}-${endLine} 行`;
   }
 
-  // Get all input parameters for the expanded view
-  const params = Object.entries(input).filter(([key]) => key !== 'file_path' && key !== 'target_file' && key !== 'path');
+  // 获取所有参数（用于展开视图）
+  const params = Object.entries(input).filter(
+    ([key]) => key !== 'file_path' && key !== 'target_file' && key !== 'path'
+  );
 
   return (
-    <div className="task-container">
-      <div
-        className="task-header"
-        onClick={() => setExpanded((prev) => !prev)}
-        style={{ borderBottom: expanded ? '1px solid #333' : undefined }}
-      >
-        <div className="task-title-section">
-          <div
-            className="task-icon-wrapper"
-            style={{
-              width: '20px',
-              height: '20px',
-              background: 'rgba(100, 181, 246, 0.15)',
-              marginRight: '4px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: '4px',
-            }}
-          >
-            <span className="codicon codicon-eye" style={{ color: '#64b5f6', fontSize: '12px' }} />
-          </div>
-          <span style={{ fontWeight: 600, fontSize: '13px', color: '#90caf9' }}>读取</span>
-          {lineInfo && (
-            <span style={{ color: '#858585', marginLeft: '8px', fontSize: '12px' }}>
-              {lineInfo}
-            </span>
-          )}
-          <span
-            style={{
-              color: '#ccc',
-              marginLeft: '8px',
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            {fileName || filePath}
+    <div className="tool-card success">
+      {/* 头部 */}
+      <div className="tool-card-header" onClick={() => setExpanded(!expanded)}>
+        <div className="tool-card-header-left">
+          <span className="tool-card-icon read">
+            <span className="codicon codicon-eye" />
           </span>
+          <div className="tool-card-info">
+            <div className="tool-card-title">
+              <span className="tool-card-type">读取</span>
+              <span className="tool-card-file">{fileName || filePath}</span>
+            </div>
+            {lineInfo && !expanded && (
+              <div className="tool-card-subtitle">{lineInfo}</div>
+            )}
+          </div>
         </div>
 
-        <span
-          className={`codicon codicon-chevron-${expanded ? 'up' : 'down'}`}
-          style={{ color: '#858585' }}
-        />
+        <div className="tool-card-header-right">
+          <span className="tool-card-status success" />
+          <span className={`tool-card-toggle codicon codicon-chevron-down ${expanded ? 'expanded' : ''}`} />
+        </div>
       </div>
 
-      {expanded && params.length > 0 && (
-        <div className="task-details" style={{ padding: '12px', border: 'none' }}>
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '8px',
-              fontFamily: "'JetBrains Mono', 'Consolas', monospace",
-              fontSize: '12px',
-            }}
-          >
-            <div style={{ color: '#858585' }}>
-              <span style={{ color: '#90caf9', fontWeight: 600 }}>文件路径：</span>
-              <span style={{ color: '#a5d6a7' }}>{filePath}</span>
-            </div>
-            {params.map(([key, value]) => (
-              <div key={key} style={{ color: '#858585' }}>
-                <span style={{ color: '#90caf9', fontWeight: 600 }}>{key}：</span>
-                <span>{String(value)}</span>
+      {/* 展开内容 */}
+      {expanded && (
+        <div className="tool-card-content">
+          <div className="tool-card-content-inner">
+            <div className="bash-output">
+              <div style={{ marginBottom: '8px' }}>
+                <span style={{ color: 'var(--tool-read-accent)', fontWeight: 600 }}>文件路径：</span>
+                <span style={{ color: 'var(--status-success)' }}>{filePath}</span>
               </div>
-            ))}
+              {lineInfo && (
+                <div style={{ marginBottom: '8px' }}>
+                  <span style={{ color: 'var(--tool-read-accent)', fontWeight: 600 }}>读取范围：</span>
+                  <span>{lineInfo}</span>
+                </div>
+              )}
+              {params.map(([key, value]) => (
+                <div key={key} style={{ marginBottom: '4px' }}>
+                  <span style={{ color: 'var(--tool-read-accent)', fontWeight: 600 }}>{key}：</span>
+                  <span>{String(value)}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -105,4 +93,3 @@ const ReadToolBlock = ({ input }: ReadToolBlockProps) => {
 };
 
 export default ReadToolBlock;
-
