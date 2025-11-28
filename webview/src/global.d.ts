@@ -22,6 +22,8 @@ declare global {
     onDroppedFileResolved?: (jsonStr: string) => void;
     onDragEnter?: () => void;
     onDragLeave?: () => void;
+    // 斜杠命令相关
+    onUserCommandsLoaded?: (jsonStr: string) => void;
   }
 }
 

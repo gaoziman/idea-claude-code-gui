@@ -130,3 +130,33 @@ export interface ContextUsage {
   percentage: number;
 }
 
+// ========== 斜杠命令相关类型 ==========
+
+/** 命令来源类型 */
+export type CommandSource = 'system' | 'user';
+
+/** 命令分类 */
+export type CommandCategory = 'session' | 'context' | 'workflow' | 'custom';
+
+/** 斜杠命令定义 */
+export interface SlashCommand {
+  id: string;
+  name: string;
+  aliases?: string[];
+  description: string;
+  source: CommandSource;
+  category: CommandCategory;
+  icon?: string;
+  requiresInput?: boolean;
+  inputPlaceholder?: string;
+}
+
+/** 命令执行上下文 */
+export interface SlashCommandContext {
+  command: SlashCommand;
+  args?: string;
+}
+
+/** 斜杠命令选择器状态（扩展 InlinePickerState） */
+export type SlashPickerState = 'idle' | 'type-select' | 'searching' | 'slash-command';
+
