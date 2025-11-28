@@ -339,6 +339,16 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
                     handleResolveDroppedFile(content);
                     break;
 
+                case "execute_slash_command":
+                    System.out.println("[Backend] 处理: execute_slash_command");
+                    handleExecuteSlashCommand(content);
+                    break;
+
+                case "load_user_commands":
+                    System.out.println("[Backend] 处理: load_user_commands");
+                    handleLoadUserCommands();
+                    break;
+
                 default:
                     System.err.println("[Backend] 警告: 未知的消息类型: " + type);
             }
@@ -699,20 +709,30 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
          * 调用 JavaScript 函数
          */
         private void callJavaScript(String functionName, String... args) {
-            if (browser == null) return;
+            if (browser == null) {
+                System.out.println("[Backend] callJavaScript: browser is null!");
+                return;
+            }
 
             StringBuilder js = new StringBuilder();
-            js.append("if (typeof ").append(functionName).append(" === 'function') { ");
-            js.append(functionName).append("(");
+            // 添加调试日志
+            js.append("console.log('[JS] callJavaScript executing: ").append(functionName).append("'); ");
+            // 使用 window. 前缀确保能访问到全局函数
+            js.append("if (window.").append(functionName).append(") { ");
+            js.append("console.log('[JS] Function found, calling...'); ");
+            js.append("window.").append(functionName).append("(");
 
             for (int i = 0; i < args.length; i++) {
                 if (i > 0) js.append(", ");
                 js.append("'").append(args[i]).append("'");
             }
 
-            js.append("); }");
+            js.append("); console.log('[JS] Function called successfully'); ");
+            js.append("} else { console.error('[JS] Function not found: ").append(functionName).append("'); }");
 
-            browser.getCefBrowser().executeJavaScript(js.toString(), browser.getCefBrowser().getURL(), 0);
+            String jsCode = js.toString();
+            System.out.println("[Backend] 执行 JS: " + jsCode.substring(0, Math.min(200, jsCode.length())) + "...");
+            browser.getCefBrowser().executeJavaScript(jsCode, browser.getCefBrowser().getURL(), 0);
         }
 
         /**
@@ -1919,6 +1939,324 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
 
                 } catch (Exception e) {
                     System.err.println("[Backend] 解析拖拽文件失败: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            });
+        }
+
+        /**
+         * 处理斜杠命令执行
+         */
+        private void handleExecuteSlashCommand(String content) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    Gson gson = new Gson();
+                    JsonObject cmdObj = gson.fromJson(content, JsonObject.class);
+                    String commandName = cmdObj.has("command") ? cmdObj.get("command").getAsString() : "";
+                    String source = cmdObj.has("source") ? cmdObj.get("source").getAsString() : "system";
+
+                    System.out.println("[Backend] 执行斜杠命令: /" + commandName + " (source: " + source + ")");
+
+                    // 处理系统命令
+                    switch (commandName) {
+                        // ========== 会话管理 ==========
+                        case "clear":
+                        case "reset":
+                        case "new":
+                            SwingUtilities.invokeLater(() -> {
+                                createNewSession();
+                                callJavaScript("updateStatus", escapeJs("对话已清空"));
+                            });
+                            break;
+
+                        case "compact":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("上下文已压缩"));
+                            });
+                            break;
+
+                        case "resume":
+                            SwingUtilities.invokeLater(() -> {
+                                // 切换到历史视图让用户选择会话
+                                callJavaScript("updateStatus", escapeJs("请从历史记录中选择要恢复的会话"));
+                            });
+                            break;
+
+                        // ========== 项目配置 ==========
+                        case "init":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("初始化 CLAUDE.md 配置..."));
+                                sendMessageToClaude("/init - 请帮我初始化项目的 CLAUDE.md 配置文件");
+                            });
+                            break;
+
+                        case "add-dir":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("添加目录功能开发中..."));
+                            });
+                            break;
+
+                        case "memory":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("记忆管理功能开发中..."));
+                            });
+                            break;
+
+                        case "context":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("上下文管理功能开发中..."));
+                            });
+                            break;
+
+                        // ========== MCP 服务器 ==========
+                        case "mcp":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("MCP 服务器管理功能开发中..."));
+                            });
+                            break;
+
+                        case "install-github-mcp":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("GitHub MCP 安装功能开发中..."));
+                            });
+                            break;
+
+                        // ========== 配置设置 ==========
+                        case "config":
+                            System.out.println("[Backend] 进入 config case, 准备调用 updateStatus");
+                            SwingUtilities.invokeLater(() -> {
+                                System.out.println("[Backend] SwingUtilities.invokeLater 执行中...");
+                                callJavaScript("updateStatus", escapeJs("配置管理功能开发中..."));
+                                System.out.println("[Backend] callJavaScript 已调用");
+                            });
+                            break;
+
+                        case "permissions":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("权限管理功能开发中..."));
+                            });
+                            break;
+
+                        case "model":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("模型切换功能开发中..."));
+                            });
+                            break;
+
+                        case "allowed-tools":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("工具管理功能开发中..."));
+                            });
+                            break;
+
+                        case "terminal-setup":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("终端设置功能开发中..."));
+                            });
+                            break;
+
+                        // ========== 账户相关 ==========
+                        case "login":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("登录功能开发中..."));
+                            });
+                            break;
+
+                        case "logout":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("登出功能开发中..."));
+                            });
+                            break;
+
+                        case "status":
+                            SwingUtilities.invokeLater(() -> {
+                                String statusInfo = "当前状态: 已连接 | 项目: " + project.getName();
+                                callJavaScript("updateStatus", escapeJs(statusInfo));
+                            });
+                            break;
+
+                        // ========== 帮助诊断 ==========
+                        case "help":
+                            String helpMessage = "Claude Code 可用命令:\\n\\n" +
+                                "会话管理:\\n" +
+                                "  /clear - 清空对话历史\\n" +
+                                "  /compact - 压缩上下文\\n" +
+                                "  /resume - 恢复会话\\n\\n" +
+                                "项目配置:\\n" +
+                                "  /init - 初始化 CLAUDE.md\\n" +
+                                "  /add-dir - 添加工作目录\\n" +
+                                "  /memory - 管理记忆\\n\\n" +
+                                "MCP 服务器:\\n" +
+                                "  /mcp - MCP 管理\\n" +
+                                "  /install-github-mcp - 安装 MCP\\n\\n" +
+                                "帮助:\\n" +
+                                "  /help - 显示帮助\\n" +
+                                "  /doctor - 诊断问题\\n" +
+                                "  /cost - 查看费用";
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("addErrorMessage", escapeJs(helpMessage));
+                            });
+                            break;
+
+                        case "doctor":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("诊断功能开发中..."));
+                            });
+                            break;
+
+                        case "bug":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("Bug 报告功能开发中..."));
+                            });
+                            break;
+
+                        case "cost":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("费用统计功能开发中..."));
+                            });
+                            break;
+
+                        // ========== 工作流 ==========
+                        case "agents":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("代理管理功能开发中..."));
+                            });
+                            break;
+
+                        case "review":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("代码审查模式开发中..."));
+                            });
+                            break;
+
+                        case "pr-comments":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("PR 评论功能开发中..."));
+                            });
+                            break;
+
+                        case "vim":
+                            SwingUtilities.invokeLater(() -> {
+                                callJavaScript("updateStatus", escapeJs("Vim 模式开发中..."));
+                            });
+                            break;
+
+                        default:
+                            // 用户自定义命令
+                            if ("user".equals(source)) {
+                                handleUserCommand(commandName);
+                            } else {
+                                SwingUtilities.invokeLater(() -> {
+                                    callJavaScript("updateStatus", escapeJs("未知命令: /" + commandName));
+                                });
+                            }
+                            break;
+                    }
+                } catch (Exception e) {
+                    System.err.println("[Backend] 执行斜杠命令失败: " + e.getMessage());
+                    e.printStackTrace();
+                    SwingUtilities.invokeLater(() -> {
+                        callJavaScript("updateStatus", escapeJs("命令执行失败: " + e.getMessage()));
+                    });
+                }
+            });
+        }
+
+        /**
+         * 处理用户自定义命令
+         */
+        private void handleUserCommand(String commandName) {
+            try {
+                // 读取用户命令文件 ~/.claude/commands/{commandName}.md
+                String userHome = System.getProperty("user.home");
+                java.nio.file.Path commandPath = java.nio.file.Paths.get(userHome, ".claude", "commands", commandName + ".md");
+
+                if (!java.nio.file.Files.exists(commandPath)) {
+                    SwingUtilities.invokeLater(() -> {
+                        callJavaScript("updateStatus", escapeJs("未找到命令文件: " + commandName + ".md"));
+                    });
+                    return;
+                }
+
+                String commandContent = java.nio.file.Files.readString(commandPath);
+                System.out.println("[Backend] 加载用户命令: " + commandName + " (" + commandContent.length() + " chars)");
+
+                // 将命令内容作为消息发送给 Claude
+                SwingUtilities.invokeLater(() -> {
+                    sendMessageToClaude("/" + commandName + "\n\n" + commandContent);
+                });
+
+            } catch (Exception e) {
+                System.err.println("[Backend] 加载用户命令失败: " + e.getMessage());
+                SwingUtilities.invokeLater(() -> {
+                    callJavaScript("updateStatus", escapeJs("加载命令失败: " + e.getMessage()));
+                });
+            }
+        }
+
+        /**
+         * 加载用户自定义命令列表
+         */
+        private void handleLoadUserCommands() {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    String userHome = System.getProperty("user.home");
+                    java.nio.file.Path commandsDir = java.nio.file.Paths.get(userHome, ".claude", "commands");
+
+                    com.google.gson.JsonArray commandsArray = new com.google.gson.JsonArray();
+
+                    if (java.nio.file.Files.exists(commandsDir) && java.nio.file.Files.isDirectory(commandsDir)) {
+                        java.nio.file.Files.list(commandsDir)
+                            .filter(p -> p.toString().endsWith(".md"))
+                            .forEach(p -> {
+                                try {
+                                    String fileName = p.getFileName().toString();
+                                    String cmdName = fileName.substring(0, fileName.length() - 3); // 去掉 .md
+
+                                    // 读取文件第一行作为描述
+                                    String content = java.nio.file.Files.readString(p);
+                                    String description = "";
+                                    String[] lines = content.split("\n");
+                                    if (lines.length > 0) {
+                                        // 去掉 markdown 标记
+                                        description = lines[0]
+                                            .replaceAll("^#+\\s*", "")
+                                            .replaceAll("^\\*+\\s*", "")
+                                            .trim();
+                                        if (description.length() > 60) {
+                                            description = description.substring(0, 60) + "...";
+                                        }
+                                    }
+
+                                    JsonObject cmd = new JsonObject();
+                                    cmd.addProperty("id", "user_" + cmdName);
+                                    cmd.addProperty("name", cmdName);
+                                    cmd.addProperty("description", description.isEmpty() ? cmdName : description);
+                                    cmd.addProperty("source", "user");
+                                    cmd.addProperty("category", "custom");
+                                    cmd.addProperty("icon", "file");
+
+                                    commandsArray.add(cmd);
+                                } catch (Exception e) {
+                                    System.err.println("[Backend] 读取命令文件失败: " + p + " - " + e.getMessage());
+                                }
+                            });
+                    }
+
+                    Gson gson = new Gson();
+                    String commandsJson = gson.toJson(commandsArray);
+
+                    System.out.println("[Backend] 加载用户命令列表: " + commandsArray.size() + " 个命令");
+
+                    // 回调通知前端
+                    SwingUtilities.invokeLater(() -> {
+                        String js = "if (window.onUserCommandsLoaded) { window.onUserCommandsLoaded('" +
+                            escapeJs(commandsJson) + "'); }";
+                        browser.getCefBrowser().executeJavaScript(js, browser.getCefBrowser().getURL(), 0);
+                    });
+
+                } catch (Exception e) {
+                    System.err.println("[Backend] 加载用户命令列表失败: " + e.getMessage());
                     e.printStackTrace();
                 }
             });
