@@ -160,3 +160,5 @@ export interface SlashCommandContext {
 /** 斜杠命令选择器状态（扩展 InlinePickerState） */
 export type SlashPickerState = 'idle' | 'type-select' | 'searching' | 'slash-command';
 
+// ========== MCP 相关类型导出 ==========
+export * from './mcp';
