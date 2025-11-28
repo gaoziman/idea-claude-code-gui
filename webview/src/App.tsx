@@ -758,22 +758,28 @@ const App = () => {
 
   // 计算累计 token 使用量和上下文使用量
   const { tokenUsage, contextUsed } = useMemo(() => {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheReadTokens = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let lastContextUsed = 0;
 
+    // 遍历所有消息，累计 token 使用量
     messages.forEach((message) => {
       if (message.type === 'assistant' && message.raw) {
         try {
           const raw = typeof message.raw === 'string' ? JSON.parse(message.raw) : message.raw;
           const usage = raw?.message?.usage as TokenUsage | undefined;
           if (usage) {
-            // 输入 tokens
-            inputTokens += usage.input_tokens || 0;
-            // 缓存读取 tokens
-            cacheReadTokens += usage.cache_read_input_tokens || 0;
-            // 输出 tokens
-            outputTokens += usage.output_tokens || 0;
+            // 累计输入 tokens（包括缓存读取）
+            totalInputTokens += (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0);
+            // 累计输出 tokens
+            totalOutputTokens += usage.output_tokens || 0;
+            // 上下文使用量：只取最后一条消息的值
+            // 因为 cache_read_input_tokens 已经包含了之前对话的上下文
+            // 所以最后一条消息的 input + cache_read + output 就是当前总上下文使用量
+            const currentContext = (usage.input_tokens || 0) + (usage.cache_read_input_tokens || 0) + (usage.output_tokens || 0);
+            if (currentContext > 0) {
+              lastContextUsed = currentContext;
+            }
           }
         } catch {
           // 忽略解析错误
@@ -781,12 +787,9 @@ const App = () => {
       }
     });
 
-    // 上下文使用量 = 输入 + 输出 + 缓存读取
-    const contextUsed = inputTokens + outputTokens + cacheReadTokens;
-
     return {
-      tokenUsage: { inputTokens: inputTokens + cacheReadTokens, outputTokens },
-      contextUsed,
+      tokenUsage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+      contextUsed: lastContextUsed,
     };
   }, [messages]);
 
