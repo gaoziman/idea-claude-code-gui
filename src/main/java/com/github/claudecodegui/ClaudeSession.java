@@ -47,6 +47,9 @@ public class ClaudeSession {
     // 权限模式（传递给SDK）
     private String permissionMode = "default";
 
+    // 模型选择（传递给SDK）
+    private String model = "sonnet";
+
     /**
      * 消息类
      */
@@ -239,6 +242,7 @@ public class ClaudeSession {
                 cwd,        // 传递工作目录
                 attachments,
                 permissionMode, // 传递权限模式
+                model,          // 传递模型选择
                 new ClaudeSDKBridge.MessageCallback() {
                 private final StringBuilder assistantContent = new StringBuilder();
                 private Message currentAssistantMessage = null;
@@ -528,6 +532,23 @@ public class ClaudeSession {
      */
     public String getPermissionMode() {
         return permissionMode;
+    }
+
+    /**
+     * 设置模型
+     */
+    public void setModel(String model) {
+        if (model != null && !model.isEmpty()) {
+            this.model = model;
+            System.out.println("[ClaudeSession] Model changed to: " + model);
+        }
+    }
+
+    /**
+     * 获取模型
+     */
+    public String getModel() {
+        return model;
     }
 
     /**

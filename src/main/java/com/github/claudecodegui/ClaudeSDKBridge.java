@@ -892,6 +892,30 @@ public class ClaudeSDKBridge {
         String permissionMode,
         MessageCallback callback
     ) {
+        return sendMessage(channelId, message, sessionId, cwd, attachments, permissionMode, null, callback);
+    }
+
+    /**
+     * 在已有 channel 中发送消息（流式响应，支持权限模式和模型选择）
+     * @param channelId 频道 ID
+     * @param message 消息内容
+     * @param sessionId 会话 ID（用于恢复上下文）
+     * @param cwd 工作目录
+     * @param attachments 附件列表（可选）
+     * @param permissionMode 权限模式（可选）
+     * @param model 模型选择（可选，默认 sonnet）
+     * @param callback 流式回调
+     */
+    public CompletableFuture<SDKResult> sendMessage(
+        String channelId,
+        String message,
+        String sessionId,
+        String cwd,
+        List<ClaudeSession.Attachment> attachments,
+        String permissionMode,
+        String model,
+        MessageCallback callback
+    ) {
         return CompletableFuture.supplyAsync(() -> {
             SDKResult result = new SDKResult();
             StringBuilder assistantContent = new StringBuilder();
@@ -913,17 +937,19 @@ public class ClaudeSDKBridge {
                 // 否则 cwd 会被误认为是 sessionId
                 command.add(sessionId != null ? sessionId : "");
 
-                // cwd 参数（如果有）
-                if (cwd != null) {
-                    command.add(cwd);
-                }
+                // 重要：即使 cwd 为 null，也要传递占位符，以保持参数顺序
+                // 否则 permissionMode 会被误认为是 cwd
+                command.add(cwd != null ? cwd : "");
 
-                // 权限模式参数（如果有）
-                if (permissionMode != null) {
-                    command.add(permissionMode);
-                }
+                // 权限模式参数（即使为 null 也传递占位符）
+                command.add(permissionMode != null ? permissionMode : "default");
+
+                // 模型参数（即使为 null 也传递默认值）
+                command.add(model != null && !model.isEmpty() ? model : "sonnet");
 
                 System.out.println("[ClaudeSDKBridge] Executing command: " + String.join(" ", command));
+                System.out.println("[ClaudeSDKBridge] Permission mode: " + permissionMode);
+                System.out.println("[ClaudeSDKBridge] Model: " + (model != null ? model : "sonnet"));
 
                 File processTempDir = prepareClaudeTempDir();
                 Set<String> existingTempMarkers = snapshotClaudeCwdFiles(processTempDir);

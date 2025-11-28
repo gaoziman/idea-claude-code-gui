@@ -142,8 +142,9 @@ function selectWorkingDirectory(requestedCwd) {
  * @param {string} resumeSessionId - 要恢复的会话ID
  * @param {string} cwd - 工作目录
  * @param {string} permissionMode - 权限模式（可选）
+ * @param {string} model - 模型选择（可选，默认 sonnet）
  */
-async function sendMessage(message, resumeSessionId = null, cwd = null, permissionMode = null) {
+async function sendMessage(message, resumeSessionId = null, cwd = null, permissionMode = null, model = null) {
   try {
     process.env.CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT || 'sdk-ts';
     console.log('[DEBUG] CLAUDE_CODE_ENTRYPOINT:', process.env.CLAUDE_CODE_ENTRYPOINT);
@@ -155,6 +156,7 @@ async function sendMessage(message, resumeSessionId = null, cwd = null, permissi
       resumeSessionId,
       cwd,
       permissionMode,
+      model,
       IDEA_PROJECT_PATH: process.env.IDEA_PROJECT_PATH,
       PROJECT_PATH: process.env.PROJECT_PATH
     });
@@ -188,19 +190,77 @@ async function sendMessage(message, resumeSessionId = null, cwd = null, permissi
     const systemTmpDir = tmpdir();
     console.log('[DEBUG] Using system temp directory:', systemTmpDir);
 
+    // 根据权限模式创建 canUseTool 回调
+    const createCanUseTool = (mode) => {
+      switch (mode) {
+        case 'bypassPermissions':
+          // 信任模式：自动允许所有操作
+          console.log('[PERMISSION_MODE] bypassPermissions - 自动允许所有操作');
+          return async (toolName, input) => {
+            console.log(`[AUTO_ALLOW] Tool: ${toolName}`);
+            return { behavior: 'allow', updatedInput: input };
+          };
+
+        case 'acceptEdits':
+          // 允许编辑模式：自动允许编辑和读取操作，其他操作需确认
+          console.log('[PERMISSION_MODE] acceptEdits - 自动允许编辑操作');
+          return async (toolName, input) => {
+            const editTools = ['Edit', 'Write', 'Read', 'Glob', 'Grep', 'NotebookEdit'];
+            if (editTools.includes(toolName)) {
+              console.log(`[AUTO_ALLOW] Edit tool: ${toolName}`);
+              return { behavior: 'allow', updatedInput: input };
+            }
+            // 其他工具（如 Bash）仍需确认
+            console.log(`[NEED_CONFIRM] Non-edit tool: ${toolName}`);
+            return canUseTool(toolName, input);
+          };
+
+        case 'plan':
+          // 规划模式：只允许只读操作
+          console.log('[PERMISSION_MODE] plan - 只允许只读操作');
+          return async (toolName, input) => {
+            const readOnlyTools = ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'];
+            if (readOnlyTools.includes(toolName)) {
+              console.log(`[AUTO_ALLOW] Read-only tool: ${toolName}`);
+              return { behavior: 'allow', updatedInput: input };
+            }
+            // 禁止写入和执行操作
+            console.log(`[AUTO_DENY] Write/Execute tool in plan mode: ${toolName}`);
+            return {
+              behavior: 'deny',
+              message: '规划模式下不允许执行写入或修改操作'
+            };
+          };
+
+        case 'default':
+        default:
+          // 默认模式：使用自定义权限处理（弹出确认框）
+          console.log('[PERMISSION_MODE] default - 需要用户确认');
+          return canUseTool;
+      }
+    };
+
     // 准备选项
+    // 确定要使用的模型（默认 sonnet）
+    const selectedModel = model || 'sonnet';
+    console.log('[DEBUG] Using model:', selectedModel);
+
     const options = {
       cwd: workingDirectory,
       permissionMode: permissionMode || 'default', // 使用传入的权限模式，如果没有则默认
-      model: 'sonnet',
+      model: selectedModel,
       maxTurns: 100,
       additionalDirectories: Array.from(
         new Set(
           [workingDirectory, process.env.IDEA_PROJECT_PATH, process.env.PROJECT_PATH].filter(Boolean)
         )
       ),
-      // 添加 canUseTool 回调来处理权限请求
-      canUseTool: permissionMode === 'default' ? canUseTool : undefined
+      // 加载项目设置，确保 SDK 正确识别项目目录和 CLAUDE.md
+      settingSources: ['project'],
+      // 使用 Claude Code 系统提示预设，确保正确的工具行为
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
+      // 根据权限模式设置 canUseTool 回调
+      canUseTool: createCanUseTool(permissionMode || 'default')
     };
 
     console.log('[DEBUG] Options:', JSON.stringify(options, null, 2));
@@ -366,8 +426,8 @@ process.on('unhandledRejection', (reason) => {
   try {
     switch (command) {
       case 'send':
-        // send <message> [sessionId] [cwd] [permissionMode]
-        await sendMessage(args[0], args[1], args[2], args[3]);
+        // send <message> [sessionId] [cwd] [permissionMode] [model]
+        await sendMessage(args[0], args[1], args[2], args[3], args[4]);
         break;
 
       case 'getSession':

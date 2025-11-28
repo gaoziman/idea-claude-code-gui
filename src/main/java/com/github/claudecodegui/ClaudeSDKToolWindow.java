@@ -15,6 +15,15 @@ import com.intellij.ide.BrowserUtil;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.LocalFileSystem;
+import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.command.WriteCommandAction;
+import com.intellij.openapi.fileEditor.FileEditor;
+import com.intellij.openapi.fileEditor.TextEditor;
+import com.intellij.ide.scratch.ScratchFileService;
+import com.intellij.ide.scratch.ScratchRootType;
+import com.intellij.lang.Language;
+import com.intellij.openapi.fileTypes.PlainTextLanguage;
 import com.github.claudecodegui.permission.PermissionDialog;
 import com.github.claudecodegui.permission.PermissionRequest;
 import com.github.claudecodegui.permission.PermissionService;
@@ -23,6 +32,9 @@ import com.google.gson.JsonObject;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.Transferable;
+import java.awt.dnd.*;
 import java.util.List;
 import java.io.File;
 import java.util.concurrent.CompletableFuture;
@@ -55,6 +67,7 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
         private ClaudeSession session; // 添加 Session 管理
         private ToolInterceptor toolInterceptor; // 工具拦截器
         private CCSwitchSettingsService settingsService; // 配置服务
+        private ProjectSearchService searchService; // 项目搜索服务
 
         public ClaudeChatWindow(Project project) {
             this.project = project;
@@ -62,6 +75,7 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
             this.session = new ClaudeSession(sdkBridge); // 创建新会话
             this.toolInterceptor = new ToolInterceptor(project); // 创建工具拦截器
             this.settingsService = new CCSwitchSettingsService(); // 创建配置服务
+            this.searchService = new ProjectSearchService(project); // 创建搜索服务
             try {
                 this.settingsService.applyActiveProviderToClaudeSettings();
             } catch (Exception e) {
@@ -136,6 +150,9 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
 
                 // 加载 HTML
                 browser.loadHTML(htmlContent);
+
+                // 添加拖拽支持
+                setupDropTarget(browser.getComponent());
 
                 mainPanel.add(browser.getComponent(), BorderLayout.CENTER);
 
@@ -287,6 +304,41 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
                     handleGetUsageStatistics(content);
                     break;
 
+                case "change_permission_mode":
+                    System.out.println("[Backend] 处理: change_permission_mode - " + content);
+                    handleChangePermissionMode(content);
+                    break;
+
+                case "change_model":
+                    System.out.println("[Backend] 处理: change_model - " + content);
+                    handleChangeModel(content);
+                    break;
+
+                case "save_clipboard_image":
+                    System.out.println("[Backend] 处理: save_clipboard_image");
+                    handleSaveClipboardImage(content);
+                    break;
+
+                case "search_project":
+                    System.out.println("[Backend] 处理: search_project");
+                    handleSearchProject(content);
+                    break;
+
+                case "insert_at_cursor":
+                    System.out.println("[Backend] 处理: insert_at_cursor");
+                    handleInsertAtCursor(content);
+                    break;
+
+                case "add_to_new_file":
+                    System.out.println("[Backend] 处理: add_to_new_file");
+                    handleAddToNewFile(content);
+                    break;
+
+                case "resolve_dropped_file":
+                    System.out.println("[Backend] 处理: resolve_dropped_file - " + content);
+                    handleResolveDroppedFile(content);
+                    break;
+
                 default:
                     System.err.println("[Backend] 警告: 未知的消息类型: " + type);
             }
@@ -307,35 +359,20 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
         /**
          * 确定合适的工作目录
          * 优先级：
-         * 1. 当前打开文件的目录
-         * 2. 项目根目录
-         * 3. 用户主目录
+         * 1. 项目根目录（确保 Claude 能访问整个项目）
+         * 2. 用户主目录（作为最后回退）
+         *
+         * 注意：不再使用当前打开文件的目录，因为那会导致 Glob 等工具无法搜索整个项目
          */
         private String determineWorkingDirectory() {
-            // 1. 尝试获取当前打开文件的目录
-            try {
-                FileEditorManager editorManager = FileEditorManager.getInstance(project);
-                VirtualFile[] openFiles = editorManager.getOpenFiles();
-                if (openFiles != null && openFiles.length > 0) {
-                    VirtualFile currentFile = editorManager.getSelectedFiles()[0];
-                    if (currentFile != null && currentFile.getParent() != null) {
-                        String currentFileDir = currentFile.getParent().getPath();
-                        System.out.println("[ClaudeChatWindow] Using current file directory: " + currentFileDir);
-                        return currentFileDir;
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("[ClaudeChatWindow] Failed to get current file directory: " + e.getMessage());
-            }
-
-            // 2. 尝试使用项目根目录
+            // 1. 优先使用项目根目录（确保 Claude 能访问整个项目结构）
             String projectPath = project.getBasePath();
             if (projectPath != null && new File(projectPath).exists()) {
                 System.out.println("[ClaudeChatWindow] Using project base path: " + projectPath);
                 return projectPath;
             }
 
-            // 3. 最后使用用户主目录
+            // 2. 最后使用用户主目录
             String userHome = System.getProperty("user.home");
             System.out.println("[ClaudeChatWindow] WARNING: Using user home directory as fallback: " + userHome);
             System.out.println("[ClaudeChatWindow] Files will be written to: " + userHome);
@@ -579,8 +616,8 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
                     });
                 }
 
-                // 使用 default 模式，会触发权限请求
-                session.setPermissionMode("default");
+                // 权限模式由用户通过前端选择，不再强制覆盖
+                // 用户选择的权限模式已通过 handleChangePermissionMode 正确设置
 
                 // 直接发送原始消息，工作目录已经在底层正确处理
                 // 不再需要关键词匹配和提示，因为ProcessBuilder和channel-manager.js已经智能处理了工作目录
@@ -1290,6 +1327,352 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
         }
 
         /**
+         * 处理权限模式变更
+         */
+        private void handleChangePermissionMode(String mode) {
+            try {
+                // 验证模式值
+                if (mode == null || mode.isEmpty()) {
+                    System.err.println("[Backend] 无效的权限模式: 空值");
+                    return;
+                }
+
+                // 支持的模式: default, acceptEdits, bypassPermissions, plan
+                switch (mode) {
+                    case "default":
+                    case "acceptEdits":
+                    case "bypassPermissions":
+                    case "plan":
+                        session.setPermissionMode(mode);
+                        System.out.println("[Backend] 权限模式已更改为: " + mode);
+
+                        // 更新前端状态
+                        SwingUtilities.invokeLater(() -> {
+                            String statusMessage = switch (mode) {
+                                case "default" -> "权限模式: 默认 (每次确认)";
+                                case "acceptEdits" -> "权限模式: 允许编辑";
+                                case "bypassPermissions" -> "权限模式: 信任模式";
+                                case "plan" -> "权限模式: 规划模式";
+                                default -> "权限模式已更改";
+                            };
+                            callJavaScript("updateStatus", escapeJs(statusMessage));
+                        });
+                        break;
+                    default:
+                        System.err.println("[Backend] 未知的权限模式: " + mode);
+                }
+            } catch (Exception e) {
+                System.err.println("[Backend] 处理权限模式变更失败: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+
+        /**
+         * 处理模型变更
+         */
+        private void handleChangeModel(String model) {
+            try {
+                // 验证模型值
+                if (model == null || model.isEmpty()) {
+                    System.err.println("[Backend] 无效的模型: 空值");
+                    return;
+                }
+
+                // 支持的模型: sonnet, opus, haiku
+                switch (model.toLowerCase()) {
+                    case "sonnet":
+                    case "opus":
+                    case "haiku":
+                        session.setModel(model.toLowerCase());
+                        System.out.println("[Backend] 模型已更改为: " + model);
+
+                        // 更新前端状态
+                        SwingUtilities.invokeLater(() -> {
+                            String statusMessage = switch (model.toLowerCase()) {
+                                case "sonnet" -> "模型: Claude Sonnet 4.5";
+                                case "opus" -> "模型: Claude Opus";
+                                case "haiku" -> "模型: Claude Haiku";
+                                default -> "模型已更改";
+                            };
+                            callJavaScript("updateStatus", escapeJs(statusMessage));
+                        });
+                        break;
+                    default:
+                        System.err.println("[Backend] 未知的模型: " + model);
+                }
+            } catch (Exception e) {
+                System.err.println("[Backend] 处理模型变更失败: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+
+        /**
+         * 处理保存剪贴板图片
+         */
+        private void handleSaveClipboardImage(String content) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    Gson gson = new Gson();
+                    JsonObject data = gson.fromJson(content, JsonObject.class);
+
+                    String imageId = data.get("id").getAsString();
+                    String base64 = data.get("base64").getAsString();
+                    String fileName = data.get("name").getAsString();
+
+                    // 创建临时目录
+                    String tempDir = System.getProperty("java.io.tmpdir");
+                    File claudeImagesDir = new File(tempDir, "claude-images");
+                    if (!claudeImagesDir.exists()) {
+                        claudeImagesDir.mkdirs();
+                    }
+
+                    // 保存图片文件
+                    File imageFile = new File(claudeImagesDir, fileName);
+                    byte[] imageBytes = java.util.Base64.getDecoder().decode(base64);
+                    java.nio.file.Files.write(imageFile.toPath(), imageBytes);
+
+                    String filePath = imageFile.getAbsolutePath();
+                    System.out.println("[Backend] 图片已保存: " + filePath);
+
+                    // 回调通知前端图片保存成功
+                    SwingUtilities.invokeLater(() -> {
+                        String js = "if (window.onImageSaved) { window.onImageSaved('" +
+                            escapeJs(imageId) + "', '" + escapeJs(filePath) + "'); }";
+                        browser.getCefBrowser().executeJavaScript(js, browser.getCefBrowser().getURL(), 0);
+                    });
+
+                } catch (Exception e) {
+                    System.err.println("[Backend] 保存图片失败: " + e.getMessage());
+                    e.printStackTrace();
+                    SwingUtilities.invokeLater(() -> {
+                        callJavaScript("updateStatus", escapeJs("保存图片失败: " + e.getMessage()));
+                    });
+                }
+            });
+        }
+
+        /**
+         * 处理项目搜索请求
+         */
+        private void handleSearchProject(String content) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    Gson gson = new Gson();
+                    JsonObject data = gson.fromJson(content, JsonObject.class);
+
+                    String searchType = data.has("type") ? data.get("type").getAsString() : "file";
+                    String query = data.has("query") ? data.get("query").getAsString() : "";
+
+                    System.out.println("[Backend] 搜索类型: " + searchType + ", 查询: " + query);
+
+                    // 获取当前编辑器文件的父目录作为上下文目录
+                    String contextDir = null;
+                    if ("folder".equals(searchType)) {
+                        VirtualFile[] selectedFiles = FileEditorManager.getInstance(project).getSelectedFiles();
+                        if (selectedFiles.length > 0) {
+                            VirtualFile currentFile = selectedFiles[0];
+                            VirtualFile parentDir = currentFile.getParent();
+                            if (parentDir != null) {
+                                contextDir = parentDir.getPath();
+                                System.out.println("[Backend] 当前编辑器文件: " + currentFile.getPath());
+                                System.out.println("[Backend] 上下文目录: " + contextDir);
+                            }
+                        }
+                    }
+
+                    String resultJson = searchService.search(searchType, query, contextDir);
+
+                    SwingUtilities.invokeLater(() -> {
+                        String js = "if (window.onSearchResults) { window.onSearchResults('" +
+                            escapeJs(resultJson) + "'); }";
+                        browser.getCefBrowser().executeJavaScript(js, browser.getCefBrowser().getURL(), 0);
+                    });
+
+                } catch (Exception e) {
+                    System.err.println("[Backend] 搜索失败: " + e.getMessage());
+                    e.printStackTrace();
+                    SwingUtilities.invokeLater(() -> {
+                        String js = "if (window.onSearchResults) { window.onSearchResults('{\"results\":[]}'); }";
+                        browser.getCefBrowser().executeJavaScript(js, browser.getCefBrowser().getURL(), 0);
+                    });
+                }
+            });
+        }
+
+        /**
+         * 处理插入代码到光标位置
+         */
+        private void handleInsertAtCursor(String content) {
+            SwingUtilities.invokeLater(() -> {
+                try {
+                    Gson gson = new Gson();
+                    JsonObject data = gson.fromJson(content, JsonObject.class);
+
+                    String code = data.get("code").getAsString();
+
+                    // 获取当前编辑器
+                    FileEditor[] editors = FileEditorManager.getInstance(project).getSelectedEditors();
+                    if (editors.length == 0) {
+                        callJavaScript("updateStatus", escapeJs("没有打开的编辑器"));
+                        return;
+                    }
+
+                    Editor editor = null;
+                    for (FileEditor fe : editors) {
+                        if (fe instanceof TextEditor) {
+                            editor = ((TextEditor) fe).getEditor();
+                            break;
+                        }
+                    }
+
+                    if (editor == null) {
+                        callJavaScript("updateStatus", escapeJs("当前编辑器不支持文本编辑"));
+                        return;
+                    }
+
+                    // 在光标位置插入代码
+                    final Editor finalEditor = editor;
+                    final int offset = editor.getCaretModel().getOffset();
+
+                    WriteCommandAction.runWriteCommandAction(project, () -> {
+                        Document document = finalEditor.getDocument();
+                        document.insertString(offset, code);
+                    });
+
+                    System.out.println("[Backend] 代码已插入到光标位置");
+                    callJavaScript("updateStatus", escapeJs("代码已插入"));
+
+                } catch (Exception e) {
+                    System.err.println("[Backend] 插入代码失败: " + e.getMessage());
+                    e.printStackTrace();
+                    callJavaScript("updateStatus", escapeJs("插入代码失败: " + e.getMessage()));
+                }
+            });
+        }
+
+        /**
+         * 处理添加代码到新文件
+         */
+        private void handleAddToNewFile(String content) {
+            SwingUtilities.invokeLater(() -> {
+                try {
+                    Gson gson = new Gson();
+                    JsonObject data = gson.fromJson(content, JsonObject.class);
+
+                    String code = data.get("code").getAsString();
+                    String language = data.has("language") ? data.get("language").getAsString() : "";
+
+                    // 根据语言确定文件扩展名
+                    String extension = getExtensionForLanguage(language);
+
+                    // 创建 Scratch 文件
+                    ScratchRootType rootType = ScratchRootType.getInstance();
+
+                    String fileName = "scratch" + extension;
+                    VirtualFile scratchFile = rootType.createScratchFile(
+                        project,
+                        fileName,
+                        getLanguageForLanguageName(language),
+                        code
+                    );
+
+                    if (scratchFile != null) {
+                        // 打开新创建的文件
+                        FileEditorManager.getInstance(project).openFile(scratchFile, true);
+                        System.out.println("[Backend] 已创建新文件: " + scratchFile.getPath());
+                        callJavaScript("updateStatus", escapeJs("已创建新文件"));
+                    } else {
+                        callJavaScript("updateStatus", escapeJs("创建文件失败"));
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("[Backend] 创建新文件失败: " + e.getMessage());
+                    e.printStackTrace();
+                    callJavaScript("updateStatus", escapeJs("创建文件失败: " + e.getMessage()));
+                }
+            });
+        }
+
+        /**
+         * 根据语言获取文件扩展名
+         */
+        private String getExtensionForLanguage(String language) {
+            if (language == null || language.isEmpty()) {
+                return ".txt";
+            }
+            return switch (language.toLowerCase()) {
+                case "javascript", "js" -> ".js";
+                case "typescript", "ts" -> ".ts";
+                case "tsx" -> ".tsx";
+                case "jsx" -> ".jsx";
+                case "java" -> ".java";
+                case "python", "py" -> ".py";
+                case "ruby", "rb" -> ".rb";
+                case "go", "golang" -> ".go";
+                case "rust", "rs" -> ".rs";
+                case "c" -> ".c";
+                case "cpp", "c++" -> ".cpp";
+                case "csharp", "c#", "cs" -> ".cs";
+                case "php" -> ".php";
+                case "swift" -> ".swift";
+                case "kotlin", "kt" -> ".kt";
+                case "scala" -> ".scala";
+                case "html" -> ".html";
+                case "css" -> ".css";
+                case "scss" -> ".scss";
+                case "less" -> ".less";
+                case "json" -> ".json";
+                case "xml" -> ".xml";
+                case "yaml", "yml" -> ".yaml";
+                case "markdown", "md" -> ".md";
+                case "sql" -> ".sql";
+                case "bash", "sh", "shell" -> ".sh";
+                case "powershell", "ps1" -> ".ps1";
+                case "dockerfile" -> "";
+                case "plaintext", "text" -> ".txt";
+                default -> "." + language.toLowerCase();
+            };
+        }
+
+        /**
+         * 根据语言名称获取 Language 对象
+         */
+        private Language getLanguageForLanguageName(String languageName) {
+            if (languageName == null || languageName.isEmpty()) {
+                return PlainTextLanguage.INSTANCE;
+            }
+
+            // 尝试通过语言ID查找
+            String langId = switch (languageName.toLowerCase()) {
+                case "javascript", "js" -> "JavaScript";
+                case "typescript", "ts" -> "TypeScript";
+                case "tsx" -> "TypeScript JSX";
+                case "jsx" -> "JSX Harmony";
+                case "java" -> "JAVA";
+                case "python", "py" -> "Python";
+                case "ruby", "rb" -> "ruby";
+                case "go", "golang" -> "go";
+                case "rust", "rs" -> "Rust";
+                case "c" -> "ObjectiveC";
+                case "cpp", "c++" -> "ObjectiveC";
+                case "kotlin", "kt" -> "kotlin";
+                case "scala" -> "Scala";
+                case "html" -> "HTML";
+                case "css" -> "CSS";
+                case "json" -> "JSON";
+                case "xml" -> "XML";
+                case "yaml", "yml" -> "yaml";
+                case "markdown", "md" -> "Markdown";
+                case "sql" -> "SQL";
+                case "bash", "sh", "shell" -> "Shell Script";
+                default -> languageName;
+            };
+
+            Language lang = Language.findLanguageByID(langId);
+            return lang != null ? lang : PlainTextLanguage.INSTANCE;
+        }
+
+        /**
          * 获取使用统计数据
          */
         private void handleGetUsageStatistics(String content) {
@@ -1300,7 +1683,7 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
                     // 简单处理：如果内容是 "current"，则使用当前项目路径
                     // 否则如果是路径，则使用该路径
                     // 默认为 "all"
-                    
+
                     if (content != null && !content.isEmpty() && !content.equals("{}")) {
                         // 尝试解析 JSON
                          try {
@@ -1323,15 +1706,15 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
                             }
                         }
                     }
-                    
+
                     System.out.println("[Backend] Getting usage statistics for path: " + projectPath);
-                    
+
                     ClaudeHistoryReader reader = new ClaudeHistoryReader();
                     ClaudeHistoryReader.ProjectStatistics stats = reader.getProjectStatistics(projectPath);
-                    
+
                     Gson gson = new Gson();
                     String json = gson.toJson(stats);
-                    
+
                     SwingUtilities.invokeLater(() -> {
                         callJavaScript("window.updateUsageStatistics", escapeJs(json));
                     });
@@ -1343,6 +1726,251 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
                     });
                 }
             });
+        }
+
+        /**
+         * 设置拖拽目标，接收从 IDEA Project View 拖拽的文件
+         */
+        private void setupDropTarget(Component component) {
+            new DropTarget(component, DnDConstants.ACTION_COPY_OR_MOVE, new DropTargetAdapter() {
+                @Override
+                public void dragEnter(DropTargetDragEvent dtde) {
+                    if (isAcceptableDrop(dtde.getTransferable())) {
+                        dtde.acceptDrag(DnDConstants.ACTION_COPY);
+                        // 通知前端显示拖拽状态
+                        SwingUtilities.invokeLater(() -> {
+                            callJavaScript("window.onDragEnter", "");
+                        });
+                    } else {
+                        dtde.rejectDrag();
+                    }
+                }
+
+                @Override
+                public void dragOver(DropTargetDragEvent dtde) {
+                    if (isAcceptableDrop(dtde.getTransferable())) {
+                        dtde.acceptDrag(DnDConstants.ACTION_COPY);
+                    } else {
+                        dtde.rejectDrag();
+                    }
+                }
+
+                @Override
+                public void dragExit(DropTargetEvent dte) {
+                    // 通知前端隐藏拖拽状态
+                    SwingUtilities.invokeLater(() -> {
+                        callJavaScript("window.onDragLeave", "");
+                    });
+                }
+
+                @Override
+                public void drop(DropTargetDropEvent dtde) {
+                    try {
+                        Transferable transferable = dtde.getTransferable();
+
+                        // 检查可用的数据类型
+                        for (DataFlavor flavor : transferable.getTransferDataFlavors()) {
+                            String mimeType = flavor.getMimeType();
+                            // IDEA 的 VirtualFile 数据类型（保留用于未来扩展）
+                            if (mimeType.contains("VirtualFile") || mimeType.contains("PsiFile") ||
+                                mimeType.contains("PsiElement") || mimeType.contains("application/x-java-jvm-local-objectref")) {
+                                // virtualFileFlavor = flavor;
+                            }
+                        }
+
+                        dtde.acceptDrop(DnDConstants.ACTION_COPY);
+                        boolean processed = false;
+
+                        // 尝试处理 Java File List（标准文件拖拽）
+                        if (transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                            @SuppressWarnings("unchecked")
+                            List<File> files = (List<File>) transferable.getTransferData(DataFlavor.javaFileListFlavor);
+                            for (File file : files) {
+                                String filePath = file.getAbsolutePath();
+                                handleResolveDroppedFile(filePath);
+                            }
+                            processed = true;
+                        }
+
+                        // 尝试处理字符串格式（可能包含路径）
+                        if (!processed && transferable.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                            String data = (String) transferable.getTransferData(DataFlavor.stringFlavor);
+                            // 检查是否是文件路径
+                            if (data != null && !data.isEmpty()) {
+                                String[] lines = data.split("\n");
+                                for (String line : lines) {
+                                    String trimmed = line.trim();
+                                    if (trimmed.startsWith("/") || trimmed.matches("^[A-Za-z]:.*")) {
+                                        handleResolveDroppedFile(trimmed);
+                                        processed = true;
+                                    } else if (trimmed.startsWith("file://")) {
+                                        String path = trimmed.replace("file://", "");
+                                        if (path.matches("^/[A-Za-z]:.*")) {
+                                            path = path.substring(1); // Windows 路径
+                                        }
+                                        handleResolveDroppedFile(path);
+                                        processed = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        // 尝试处理 URI List
+                        if (!processed) {
+                            DataFlavor uriListFlavor = new DataFlavor("text/uri-list;class=java.lang.String");
+                            if (transferable.isDataFlavorSupported(uriListFlavor)) {
+                                String data = (String) transferable.getTransferData(uriListFlavor);
+                                if (data != null) {
+                                    String[] uris = data.split("\n");
+                                    for (String uri : uris) {
+                                        String trimmed = uri.trim();
+                                        if (trimmed.startsWith("file://")) {
+                                            String path = java.net.URLDecoder.decode(
+                                                trimmed.replace("file://", ""), "UTF-8");
+                                            if (path.matches("^/[A-Za-z]:.*")) {
+                                                path = path.substring(1);
+                                            }
+                                            handleResolveDroppedFile(path);
+                                            processed = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 通知前端隐藏拖拽状态
+                        SwingUtilities.invokeLater(() -> {
+                            callJavaScript("window.onDragLeave", "");
+                        });
+
+                        dtde.dropComplete(processed);
+
+                    } catch (Exception e) {
+                        System.err.println("[DnD] 处理拖拽失败: " + e.getMessage());
+                        dtde.rejectDrop();
+                    }
+                }
+
+                private boolean isAcceptableDrop(Transferable transferable) {
+                    // 接受文件列表、字符串或 URI 列表
+                    return transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor) ||
+                           transferable.isDataFlavorSupported(DataFlavor.stringFlavor);
+                }
+            }, true);
+        }
+
+        /**
+         * 处理拖拽文件解析
+         * 将文件路径解析为资源信息，返回给前端
+         */
+        private void handleResolveDroppedFile(String filePath) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    if (filePath == null || filePath.isEmpty()) {
+                        System.err.println("[Backend] 拖拽文件路径为空");
+                        return;
+                    }
+
+                    // 查找文件
+                    VirtualFile file = LocalFileSystem.getInstance().findFileByPath(filePath);
+                    if (file == null) {
+                        System.err.println("[Backend] 无法找到文件: " + filePath);
+                        return;
+                    }
+
+                    // 计算相对路径
+                    String projectBasePath = project.getBasePath();
+                    String relativePath;
+                    if (projectBasePath != null && filePath.startsWith(projectBasePath)) {
+                        relativePath = filePath.substring(projectBasePath.length());
+                        if (relativePath.startsWith("/") || relativePath.startsWith("\\")) {
+                            relativePath = relativePath.substring(1);
+                        }
+                    } else {
+                        relativePath = file.getName();
+                    }
+
+                    // 确定资源类型
+                    String resourceType = file.isDirectory() ? "folder" : "file";
+
+                    // 确定图标
+                    String icon = file.isDirectory() ? "folder" : getFileIcon(file.getName());
+
+                    // 构建资源 JSON
+                    JsonObject resource = new JsonObject();
+                    resource.addProperty("id", resourceType + "_" + System.currentTimeMillis() + "_" + file.getName().hashCode());
+                    resource.addProperty("name", file.getName());
+                    resource.addProperty("path", filePath);
+                    resource.addProperty("relativePath", relativePath);
+                    resource.addProperty("type", resourceType);
+                    resource.addProperty("icon", icon);
+
+                    Gson gson = new Gson();
+                    String resourceJson = gson.toJson(resource);
+
+                    System.out.println("[Backend] 解析拖拽文件成功: " + file.getName() + " -> " + resourceType);
+
+                    // 回调通知前端
+                    SwingUtilities.invokeLater(() -> {
+                        String js = "if (window.onDroppedFileResolved) { window.onDroppedFileResolved('" +
+                            escapeJs(resourceJson) + "'); }";
+                        browser.getCefBrowser().executeJavaScript(js, browser.getCefBrowser().getURL(), 0);
+                    });
+
+                } catch (Exception e) {
+                    System.err.println("[Backend] 解析拖拽文件失败: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            });
+        }
+
+        /**
+         * 根据文件名获取图标
+         */
+        private String getFileIcon(String fileName) {
+            if (fileName == null) return "file";
+
+            String lowerName = fileName.toLowerCase();
+
+            // 根据文件扩展名返回对应的 codicon 图标
+            if (lowerName.endsWith(".java")) return "file-code";
+            if (lowerName.endsWith(".kt") || lowerName.endsWith(".kts")) return "file-code";
+            if (lowerName.endsWith(".js") || lowerName.endsWith(".jsx")) return "file-code";
+            if (lowerName.endsWith(".ts") || lowerName.endsWith(".tsx")) return "file-code";
+            if (lowerName.endsWith(".py")) return "file-code";
+            if (lowerName.endsWith(".go")) return "file-code";
+            if (lowerName.endsWith(".rs")) return "file-code";
+            if (lowerName.endsWith(".c") || lowerName.endsWith(".cpp") || lowerName.endsWith(".h")) return "file-code";
+            if (lowerName.endsWith(".cs")) return "file-code";
+            if (lowerName.endsWith(".rb")) return "file-code";
+            if (lowerName.endsWith(".php")) return "file-code";
+            if (lowerName.endsWith(".swift")) return "file-code";
+            if (lowerName.endsWith(".html") || lowerName.endsWith(".htm")) return "file-code";
+            if (lowerName.endsWith(".css") || lowerName.endsWith(".scss") || lowerName.endsWith(".less")) return "file-code";
+            if (lowerName.endsWith(".json")) return "json";
+            if (lowerName.endsWith(".xml")) return "file-code";
+            if (lowerName.endsWith(".yaml") || lowerName.endsWith(".yml")) return "file-code";
+            if (lowerName.endsWith(".md") || lowerName.endsWith(".markdown")) return "markdown";
+            if (lowerName.endsWith(".sql")) return "database";
+            if (lowerName.endsWith(".sh") || lowerName.endsWith(".bash")) return "terminal";
+            if (lowerName.endsWith(".gradle") || lowerName.endsWith(".gradle.kts")) return "file-code";
+            if (lowerName.endsWith(".pom") || lowerName.equals("pom.xml")) return "file-code";
+            if (lowerName.endsWith(".properties")) return "settings-gear";
+            if (lowerName.endsWith(".txt")) return "file-text";
+            if (lowerName.endsWith(".log")) return "file-text";
+            if (lowerName.endsWith(".png") || lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") ||
+                lowerName.endsWith(".gif") || lowerName.endsWith(".svg") || lowerName.endsWith(".webp")) return "file-media";
+            if (lowerName.endsWith(".pdf")) return "file-pdf";
+            if (lowerName.endsWith(".zip") || lowerName.endsWith(".tar") || lowerName.endsWith(".gz") ||
+                lowerName.endsWith(".rar") || lowerName.endsWith(".7z")) return "file-zip";
+
+            // 特殊文件名
+            if (lowerName.equals("dockerfile") || lowerName.startsWith("dockerfile.")) return "file-code";
+            if (lowerName.equals(".gitignore") || lowerName.equals(".gitattributes")) return "git-commit";
+            if (lowerName.equals("package.json") || lowerName.equals("package-lock.json")) return "json";
+            if (lowerName.equals("tsconfig.json") || lowerName.equals("jsconfig.json")) return "json";
+
+            return "file";
         }
 
         public JPanel getContent() {
