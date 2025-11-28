@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { ProviderConfig } from '../types/provider';
 import UsageStatisticsSection from './UsageStatisticsSection';
+import MCPSection from './MCPSection';
 
 type SettingsTab = 'basic' | 'usage' | 'permissions' | 'mcp' | 'agents' | 'skills' | 'community';
 
@@ -352,13 +353,12 @@ const SettingsView = ({ onClose }: SettingsViewProps) => {
               <span className="codicon codicon-warning" />
             </div>
             <div
-              className={`sidebar-item warning ${currentTab === 'mcp' ? 'active' : ''}`}
+              className={`sidebar-item ${currentTab === 'mcp' ? 'active' : ''}`}
               onClick={() => setCurrentTab('mcp')}
               title={isCollapsed ? 'MCP服务器' : ''}
             >
               <span className="codicon codicon-server" />
               <span className="sidebar-item-text">MCP服务器</span>
-              <span className="codicon codicon-warning" />
             </div>
             <div
               className={`sidebar-item ${currentTab === 'agents' ? 'active' : ''}`}
@@ -669,13 +669,8 @@ const SettingsView = ({ onClose }: SettingsViewProps) => {
 
           {/* MCP服务器 */}
           {currentTab === 'mcp' && (
-            <div className="config-section">
-              <h3 className="section-title">MCP服务器</h3>
-              <p className="section-desc">配置和管理 Model Context Protocol 服务器</p>
-              <div className="temp-notice">
-                <span className="codicon codicon-server" />
-                <p>MCP服务器配置功能即将推出...</p>
-              </div>
+            <div className="config-section mcp-section">
+              <MCPSection />
             </div>
           )}
 
