@@ -26,6 +26,7 @@ import type {
   PendingImage,
   PermissionMode,
   SelectedResource,
+  SlashCommand,
   TodoItem,
   TokenUsage,
   ToolResultBlock,
@@ -65,6 +66,7 @@ const App = () => {
   const [savedImagePaths, setSavedImagePaths] = useState<Record<string, string>>({});
   const [selectedResources, setSelectedResources] = useState<SelectedResource[]>([]);
   const [triggerTypeSelect, setTriggerTypeSelect] = useState(0);
+  const [userCommands, setUserCommands] = useState<SlashCommand[]>([]);
 
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -107,6 +109,21 @@ const App = () => {
         console.error('[App] Failed to parse dropped file:', e);
       }
     };
+
+    // 用户自定义命令加载回调
+    window.onUserCommandsLoaded = (jsonStr: string) => {
+      try {
+        const commands = JSON.parse(jsonStr) as SlashCommand[];
+        if (Array.isArray(commands)) {
+          setUserCommands(commands);
+        }
+      } catch (e) {
+        console.error('[App] Failed to parse user commands:', e);
+      }
+    };
+
+    // 请求加载用户自定义命令
+    sendBridgeMessage('load_user_commands');
   }, []);
 
   useEffect(() => {
@@ -326,6 +343,116 @@ const App = () => {
   const openResourceInEditor = useCallback((resource: SelectedResource) => {
     if (resource.type === 'file' || resource.type === 'doc') {
       sendBridgeMessage('open_file', resource.path);
+    }
+  }, []);
+
+  // 处理斜杠命令
+  const handleSlashCommand = useCallback((command: SlashCommand) => {
+    sendBridgeMessage('execute_slash_command', JSON.stringify({
+      command: command.name,
+      source: command.source,
+    }));
+
+    // 系统命令的前端行为
+    if (command.source === 'system') {
+      switch (command.name) {
+        // 会话管理
+        case 'clear':
+        case 'reset':
+        case 'new':
+          setMessages([]);
+          setStatus('对话已清空');
+          break;
+        case 'compact':
+          setStatus('正在压缩上下文...');
+          break;
+        case 'resume':
+          setStatus('请从历史记录中选择要恢复的会话');
+          break;
+
+        // 项目配置
+        case 'init':
+          setStatus('正在初始化 CLAUDE.md 配置...');
+          break;
+        case 'add-dir':
+          setStatus('添加目录功能开发中...');
+          break;
+        case 'memory':
+          setStatus('记忆管理功能开发中...');
+          break;
+        case 'context':
+          setStatus('上下文管理功能开发中...');
+          break;
+
+        // MCP 服务器
+        case 'mcp':
+          setStatus('MCP 服务器管理功能开发中...');
+          break;
+        case 'install-github-mcp':
+          setStatus('GitHub MCP 安装功能开发中...');
+          break;
+
+        // 配置设置
+        case 'config':
+          setStatus('配置管理功能开发中...');
+          break;
+        case 'permissions':
+          setStatus('权限管理功能开发中...');
+          break;
+        case 'model':
+          setStatus('模型切换功能开发中...');
+          break;
+        case 'allowed-tools':
+          setStatus('工具管理功能开发中...');
+          break;
+        case 'terminal-setup':
+          setStatus('终端设置功能开发中...');
+          break;
+
+        // 账户相关
+        case 'login':
+          setStatus('登录功能开发中...');
+          break;
+        case 'logout':
+          setStatus('登出功能开发中...');
+          break;
+        case 'status':
+          setStatus('正在获取状态信息...');
+          break;
+
+        // 帮助诊断
+        case 'help':
+          setStatus('正在获取帮助信息...');
+          break;
+        case 'doctor':
+          setStatus('诊断功能开发中...');
+          break;
+        case 'bug':
+          setStatus('Bug 报告功能开发中...');
+          break;
+        case 'cost':
+          setStatus('费用统计功能开发中...');
+          break;
+
+        // 工作流
+        case 'agents':
+          setStatus('代理管理功能开发中...');
+          break;
+        case 'review':
+          setStatus('代码审查模式开发中...');
+          break;
+        case 'pr-comments':
+          setStatus('PR 评论功能开发中...');
+          break;
+        case 'vim':
+          setStatus('Vim 模式开发中...');
+          break;
+
+        default:
+          setStatus(`正在执行 /${command.name}...`);
+      }
+    } else {
+      setStatus(`正在执行命令 /${command.name}...`);
     }
   }, []);
 
@@ -799,6 +926,8 @@ const App = () => {
               onResourceOpen={openResourceInEditor}
               onSend={sendMessage}
               onPaste={handlePaste}
+              onSlashCommand={handleSlashCommand}
+              userCommands={userCommands}
               triggerTypeSelect={triggerTypeSelect}
               disabled={loading}
               placeholder="输入消息..."

@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import TypeSelectorMenu, { RESOURCE_TYPE_OPTIONS } from './TypeSelectorMenu';
 import SearchDropdown from './SearchDropdown';
 import InlineResourceTag from './InlineResourceTag';
+import { SlashCommandMenu, SYSTEM_COMMANDS, filterCommands } from '../slash-command';
 import type {
   ResourceSearchType,
   SearchResult,
   SearchResponse,
   SelectedResource,
-  InlinePickerState,
+  SlashCommand,
+  SlashPickerState,
 } from '../../types';
 
 interface InlineResourcePickerProps {
@@ -19,8 +21,10 @@ interface InlineResourcePickerProps {
   onResourceOpen?: (resource: SelectedResource) => void;
   onSend: () => void;
   onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
-  onFileDrop?: (filePaths: string[]) => void; // 新增：文件拖拽回调
-  triggerTypeSelect?: number; // 递增数字触发类型选择菜单
+  onFileDrop?: (filePaths: string[]) => void;
+  onSlashCommand?: (command: SlashCommand) => void; // 斜杠命令回调
+  userCommands?: SlashCommand[]; // 用户自定义命令
+  triggerTypeSelect?: number;
   disabled?: boolean;
   placeholder?: string;
 }
@@ -41,23 +45,36 @@ const InlineResourcePicker = ({
   onSend,
   onPaste,
   onFileDrop,
+  onSlashCommand,
+  userCommands = [],
   triggerTypeSelect,
   disabled = false,
   placeholder = '输入消息...',
 }: InlineResourcePickerProps) => {
-  const [pickerState, setPickerState] = useState<InlinePickerState>('idle');
+  const [pickerState, setPickerState] = useState<SlashPickerState>('idle');
   const [searchType, setSearchType] = useState<ResourceSearchType>('file');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [typeMenuSelectedIndex, setTypeMenuSelectedIndex] = useState(0);
   const [searchSelectedIndex, setSearchSelectedIndex] = useState(0);
-  const [isDragOver, setIsDragOver] = useState(false); // 拖拽状态
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // 斜杠命令相关状态
+  const [slashQuery, setSlashQuery] = useState('');
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevTriggerRef = useRef<number | undefined>(triggerTypeSelect);
+
+  // 合并系统命令和用户自定义命令，并过滤
+  const allCommands = useMemo(() => [...SYSTEM_COMMANDS, ...userCommands], [userCommands]);
+  const filteredCommands = useMemo(
+    () => filterCommands(allCommands, slashQuery),
+    [allCommands, slashQuery]
+  );
 
   // 监听外部触发类型选择
   useEffect(() => {
@@ -144,8 +161,27 @@ const InlineResourcePicker = ({
     if (pickerState === 'searching') {
       // 在搜索模式下，更新搜索查询
       setSearchQuery(newValue);
+    } else if (pickerState === 'slash-command') {
+      // 在斜杠命令模式下，更新过滤查询
+      setSlashQuery(newValue);
+      setSlashSelectedIndex(0);
     } else {
-      // 在普通模式下，检测 # 符号
+      // 在普通模式下，检测 # 和 / 符号
+      // 检测斜杠命令触发：空输入或以空格结尾时输入 /
+      if (newValue === '/' || (newValue.endsWith('/') && (inputValue === '' || inputValue.endsWith(' ')))) {
+        // 用户输入了 /，打开斜杠命令菜单
+        setPickerState('slash-command');
+        setSlashQuery('');
+        setSlashSelectedIndex(0);
+        // 不将 / 添加到输入框（如果是独立的 /）
+        if (newValue === '/') {
+          return;
+        }
+        // 如果是空格后的 /，保留之前的内容
+        onInputChange(inputValue);
+        return;
+      }
+      // 检测 # 触发资源选择
       if (newValue.endsWith('#') && !inputValue.endsWith('#')) {
         // 用户输入了 #，打开类型选择菜单
         setPickerState('type-select');
@@ -220,6 +256,38 @@ const InlineResourcePicker = ({
           }
           break;
       }
+    } else if (pickerState === 'slash-command') {
+      // 斜杠命令模式下的键盘处理
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          if (filteredCommands.length > 0) {
+            setSlashSelectedIndex((prev) => Math.min(prev + 1, filteredCommands.length - 1));
+          }
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          if (filteredCommands.length > 0) {
+            setSlashSelectedIndex((prev) => Math.max(prev - 1, 0));
+          }
+          break;
+        case 'Enter':
+          e.preventDefault();
+          if (filteredCommands.length > 0 && filteredCommands[slashSelectedIndex]) {
+            handleSlashCommandSelect(filteredCommands[slashSelectedIndex]);
+          }
+          break;
+        case 'Escape':
+          e.preventDefault();
+          exitSlashCommandMode();
+          break;
+        case 'Backspace':
+          if (slashQuery === '') {
+            e.preventDefault();
+            exitSlashCommandMode();
+          }
+          break;
+      }
     } else {
       // 普通模式
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -285,6 +353,34 @@ const InlineResourcePicker = ({
   // 关闭类型选择菜单
   const closeTypeMenu = () => {
     setPickerState('idle');
+  };
+
+  // 处理斜杠命令选择
+  const handleSlashCommandSelect = (command: SlashCommand) => {
+    exitSlashCommandMode();
+    // 调用外部回调处理命令
+    if (onSlashCommand) {
+      onSlashCommand(command);
+    } else {
+      // 默认行为：将命令作为消息发送
+      sendBridgeMessage('execute_slash_command', JSON.stringify({
+        command: command.name,
+        source: command.source,
+      }));
+    }
+  };
+
+  // 退出斜杠命令模式
+  const exitSlashCommandMode = () => {
+    setPickerState('idle');
+    setSlashQuery('');
+    setSlashSelectedIndex(0);
+    inputRef.current?.focus();
+  };
+
+  // 关闭斜杠命令菜单
+  const closeSlashMenu = () => {
+    exitSlashCommandMode();
   };
 
   // 处理粘贴事件
@@ -474,6 +570,17 @@ const InlineResourcePicker = ({
         onSelectedIndexChange={setSearchSelectedIndex}
       />
 
+      {/* 斜杠命令菜单 */}
+      <SlashCommandMenu
+        isOpen={pickerState === 'slash-command'}
+        commands={filteredCommands}
+        query={slashQuery}
+        selectedIndex={slashSelectedIndex}
+        onSelect={handleSlashCommandSelect}
+        onClose={closeSlashMenu}
+        onSelectedIndexChange={setSlashSelectedIndex}
+      />
+
       {/* 输入区域 */}
       <div className="inline-picker-input-wrapper">
         {/* 已选资源标签 */}
@@ -491,20 +598,33 @@ const InlineResourcePicker = ({
           <span className="search-type-prefix">{getSearchTypeLabel()}</span>
         )}
 
+        {/* 斜杠命令模式下显示前缀 */}
+        {pickerState === 'slash-command' && (
+          <span className="slash-prefix">/</span>
+        )}
+
         {/* 输入框 */}
         <textarea
           ref={inputRef}
           className="inline-picker-textarea"
-          value={pickerState === 'searching' ? searchQuery : inputValue}
+          value={
+            pickerState === 'searching'
+              ? searchQuery
+              : pickerState === 'slash-command'
+                ? slashQuery
+                : inputValue
+          }
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder={
             pickerState === 'searching'
               ? '输入搜索关键词...'
-              : selectedResources.length > 0
-                ? '继续输入或按 Enter 发送...'
-                : placeholder
+              : pickerState === 'slash-command'
+                ? '输入命令名称...'
+                : selectedResources.length > 0
+                  ? '继续输入或按 Enter 发送...'
+                  : placeholder
           }
           rows={1}
           disabled={disabled}
