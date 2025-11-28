@@ -263,7 +263,7 @@ public class ClaudeSession {
                             } else {
                                 currentAssistantMessage.raw = mergedRaw;
                             }
-                            
+
                             String aggregatedText = extractMessageContent(mergedRaw);
                             assistantContent.setLength(0);
                             if (aggregatedText != null) {
@@ -274,6 +274,47 @@ public class ClaudeSession {
                             notifyMessageUpdate();
                         } catch (Exception e) {
                             System.err.println("Failed to parse assistant message JSON: " + e.getMessage());
+                        }
+                    } else if ("user".equals(type) && content.startsWith("{")) {
+                        // 处理 user 消息（包含 tool_result）
+                        // 这对于在前端显示工具执行结果非常重要
+                        try {
+                            JsonObject userMessageJson = gson.fromJson(content, JsonObject.class);
+
+                            // 详细日志：打印 user 消息的完整结构
+                            System.out.println("[ClaudeSession] === USER MESSAGE STRUCTURE ===");
+                            System.out.println("[ClaudeSession] Full JSON: " + userMessageJson.toString());
+                            System.out.println("[ClaudeSession] Has 'message' field: " + userMessageJson.has("message"));
+                            if (userMessageJson.has("message") && userMessageJson.get("message").isJsonObject()) {
+                                JsonObject msg = userMessageJson.getAsJsonObject("message");
+                                System.out.println("[ClaudeSession] message.role: " + (msg.has("role") ? msg.get("role").getAsString() : "N/A"));
+                                System.out.println("[ClaudeSession] message.content is array: " + (msg.has("content") && msg.get("content").isJsonArray()));
+                                if (msg.has("content") && msg.get("content").isJsonArray()) {
+                                    JsonArray contentArray = msg.getAsJsonArray("content");
+                                    System.out.println("[ClaudeSession] content array size: " + contentArray.size());
+                                    for (int i = 0; i < contentArray.size(); i++) {
+                                        JsonElement elem = contentArray.get(i);
+                                        if (elem.isJsonObject()) {
+                                            JsonObject block = elem.getAsJsonObject();
+                                            String blockType = block.has("type") ? block.get("type").getAsString() : "unknown";
+                                            System.out.println("[ClaudeSession] content[" + i + "].type: " + blockType);
+                                            if ("tool_result".equals(blockType) && block.has("tool_use_id")) {
+                                                System.out.println("[ClaudeSession] content[" + i + "].tool_use_id: " + block.get("tool_use_id").getAsString());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            System.out.println("[ClaudeSession] === END USER MESSAGE ===");
+
+                            // 创建一个新的用户消息（仅包含 tool_result，不显示内容）
+                            Message userToolResultMessage = new Message(Message.Type.USER, "", userMessageJson);
+                            messages.add(userToolResultMessage);
+                            System.out.println("[ClaudeSession] Added user tool_result message to list, total messages: " + messages.size());
+                            notifyMessageUpdate();
+                        } catch (Exception e) {
+                            System.err.println("Failed to parse user message JSON: " + e.getMessage());
+                            e.printStackTrace();
                         }
                     } else if ("content".equals(type)) {
                         // 处理流式内容片段（向后兼容）

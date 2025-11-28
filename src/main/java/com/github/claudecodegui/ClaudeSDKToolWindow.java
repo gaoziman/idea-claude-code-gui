@@ -536,6 +536,19 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
                             System.out.println("[ClaudeChatWindow] Message: type=" + msg.type +
                                 ", content.length=" + (msg.content != null ? msg.content.length() : 0) +
                                 ", hasRaw=" + (msg.raw != null));
+
+                            // 特别打印 user 消息的 raw 结构用于调试
+                            if (msg.type == ClaudeSession.Message.Type.USER && msg.raw != null) {
+                                System.out.println("[ClaudeChatWindow] USER raw keys: " + msg.raw.keySet());
+                                if (msg.raw.has("message")) {
+                                    com.google.gson.JsonElement msgElem = msg.raw.get("message");
+                                    System.out.println("[ClaudeChatWindow] raw.message type: " + (msgElem.isJsonObject() ? "object" : "other"));
+                                    if (msgElem.isJsonObject()) {
+                                        com.google.gson.JsonObject innerMsg = msgElem.getAsJsonObject();
+                                        System.out.println("[ClaudeChatWindow] raw.message keys: " + innerMsg.keySet());
+                                    }
+                                }
+                            }
                         }
 
                         String messagesJson = gson.toJson(messagesArray);
