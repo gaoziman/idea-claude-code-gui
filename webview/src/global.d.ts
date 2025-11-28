@@ -14,6 +14,14 @@ declare global {
     updateActiveProvider?: (jsonStr: string) => void;
     showError?: (message: string) => void;
     updateUsageStatistics?: (jsonStr: string) => void;
+    // 图片相关
+    onImageSaved?: (imageId: string, filePath: string) => void;
+    // 搜索相关
+    onSearchResults?: (jsonStr: string) => void;
+    // 拖拽文件相关
+    onDroppedFileResolved?: (jsonStr: string) => void;
+    onDragEnter?: () => void;
+    onDragLeave?: () => void;
   }
 }
 

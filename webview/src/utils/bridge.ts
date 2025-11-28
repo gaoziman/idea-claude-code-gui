@@ -30,3 +30,29 @@ export const openBrowser = (url?: string) => {
   sendBridgeEvent('open_browser', url);
 };
 
+/**
+ * 将代码插入到 IDEA 编辑器光标处
+ * @param code 要插入的代码
+ * @param language 代码语言（可选，用于格式化）
+ */
+export const insertCodeAtCursor = (code: string, language?: string) => {
+  if (!code) {
+    return;
+  }
+  const payload = JSON.stringify({ code, language: language || '' });
+  sendBridgeEvent('insert_at_cursor', payload);
+};
+
+/**
+ * 将代码添加到新文件
+ * @param code 代码内容
+ * @param language 代码语言（用于确定文件扩展名）
+ */
+export const addCodeToNewFile = (code: string, language?: string) => {
+  if (!code) {
+    return;
+  }
+  const payload = JSON.stringify({ code, language: language || '' });
+  sendBridgeEvent('add_to_new_file', payload);
+};
+
