@@ -9,6 +9,7 @@ build/
 .idea/jarRepositories.xml
 .idea/compiler.xml
 .idea/libraries/
+.idea/ApifoxUploaderProjectSetting.xml
 *.iws
 *.iml
 *.ipr
@@ -43,6 +44,7 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+.xcodemap/
 
 CLAUDE.md
 .npm-cache
