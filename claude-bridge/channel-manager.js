@@ -33,6 +33,67 @@ function loadClaudeSettings() {
   }
 }
 
+// 读取 Claude 主配置文件（包含 MCP 服务器配置）
+function loadClaudeConfig() {
+  try {
+    const configPath = join(homedir(), '.claude.json');
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    return config;
+  } catch (error) {
+    console.log('[DEBUG] Failed to load ~/.claude.json:', error.message);
+    return null;
+  }
+}
+
+// 获取 MCP 服务器配置
+function getMCPServers(projectPath = null) {
+  const claudeConfig = loadClaudeConfig();
+  const mcpServers = {};
+
+  // 1. 加载全局 MCP 服务器配置
+  if (claudeConfig?.mcpServers) {
+    Object.assign(mcpServers, claudeConfig.mcpServers);
+    console.log('[MCP] Loaded global MCP servers:', Object.keys(claudeConfig.mcpServers));
+  }
+
+  // 2. 加载项目级别 MCP 服务器配置
+  if (projectPath && claudeConfig?.projects?.[projectPath]?.mcpServers) {
+    const projectMcp = claudeConfig.projects[projectPath].mcpServers;
+    Object.assign(mcpServers, projectMcp);
+    console.log('[MCP] Loaded project MCP servers for', projectPath, ':', Object.keys(projectMcp));
+  }
+
+  // 3. 检查项目目录下的 .mcp.json 文件
+  if (projectPath) {
+    try {
+      const mcpJsonPath = join(projectPath, '.mcp.json');
+      if (existsSync(mcpJsonPath)) {
+        const mcpJsonConfig = JSON.parse(readFileSync(mcpJsonPath, 'utf8'));
+        if (mcpJsonConfig?.mcpServers) {
+          Object.assign(mcpServers, mcpJsonConfig.mcpServers);
+          console.log('[MCP] Loaded .mcp.json servers:', Object.keys(mcpJsonConfig.mcpServers));
+        }
+      }
+    } catch (error) {
+      console.log('[DEBUG] Failed to load .mcp.json:', error.message);
+    }
+  }
+
+  // 4. 过滤掉被禁用的 MCP 服务器
+  if (projectPath && claudeConfig?.projects?.[projectPath]?.disabledMcpServers) {
+    const disabledServers = claudeConfig.projects[projectPath].disabledMcpServers;
+    for (const serverName of disabledServers) {
+      if (mcpServers[serverName]) {
+        delete mcpServers[serverName];
+        console.log('[MCP] Disabled server:', serverName);
+      }
+    }
+  }
+
+  console.log('[MCP] Final MCP servers:', Object.keys(mcpServers));
+  return Object.keys(mcpServers).length > 0 ? mcpServers : undefined;
+}
+
 // 配置 API Key
 function setupApiKey() {
   const settings = loadClaudeSettings();
@@ -337,6 +398,14 @@ async function sendMessage(message, resumeSessionId = null, cwd = null, permissi
     const uniqueAdditionalDirs = Array.from(new Set(additionalDirs.filter(Boolean)));
     console.log('[DEBUG] Additional directories:', uniqueAdditionalDirs);
 
+    // 【关键修复】加载 MCP 服务器配置
+    const mcpServers = getMCPServers(normalizedWorkingDirectory);
+    if (mcpServers) {
+      console.log('[MCP] Will pass MCP servers to SDK:', Object.keys(mcpServers));
+    } else {
+      console.log('[MCP] No MCP servers configured');
+    }
+
     const options = {
       cwd: normalizedWorkingDirectory,
       permissionMode: permissionMode || 'default', // 使用传入的权限模式，如果没有则默认
@@ -348,7 +417,9 @@ async function sendMessage(message, resumeSessionId = null, cwd = null, permissi
       // 使用 Claude Code 系统提示预设，确保正确的工具行为
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       // 根据权限模式设置 canUseTool 回调
-      canUseTool: createCanUseTool(permissionMode || 'default')
+      canUseTool: createCanUseTool(permissionMode || 'default'),
+      // 【关键修复】传递 MCP 服务器配置
+      ...(mcpServers && { mcpServers })
     };
 
     console.log('[DEBUG] Options:', JSON.stringify(options, null, 2));
