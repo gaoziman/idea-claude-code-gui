@@ -68,6 +68,7 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
         private ToolInterceptor toolInterceptor; // 工具拦截器
         private CCSwitchSettingsService settingsService; // 配置服务
         private ProjectSearchService searchService; // 项目搜索服务
+        private ClaudeConfigReader configReader; // MCP 配置读取器
 
         public ClaudeChatWindow(Project project) {
             this.project = project;
@@ -76,6 +77,7 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
             this.toolInterceptor = new ToolInterceptor(project); // 创建工具拦截器
             this.settingsService = new CCSwitchSettingsService(); // 创建配置服务
             this.searchService = new ProjectSearchService(project); // 创建搜索服务
+            this.configReader = new ClaudeConfigReader(); // 创建 MCP 配置读取器
             try {
                 this.settingsService.applyActiveProviderToClaudeSettings();
             } catch (Exception e) {
@@ -347,6 +349,16 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
                 case "load_user_commands":
                     System.out.println("[Backend] 处理: load_user_commands");
                     handleLoadUserCommands();
+                    break;
+
+                case "get_mcp_servers":
+                    System.out.println("[Backend] 处理: get_mcp_servers");
+                    handleGetMCPServers();
+                    break;
+
+                case "toggle_mcp_server":
+                    System.out.println("[Backend] 处理: toggle_mcp_server");
+                    handleToggleMCPServer(content);
                     break;
 
                 default:
@@ -2226,19 +2238,54 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
                                     String fileName = p.getFileName().toString();
                                     String cmdName = fileName.substring(0, fileName.length() - 3); // 去掉 .md
 
-                                    // 读取文件第一行作为描述
+                                    // 读取文件内容
                                     String content = java.nio.file.Files.readString(p);
                                     String description = "";
-                                    String[] lines = content.split("\n");
-                                    if (lines.length > 0) {
-                                        // 去掉 markdown 标记
-                                        description = lines[0]
-                                            .replaceAll("^#+\\s*", "")
-                                            .replaceAll("^\\*+\\s*", "")
-                                            .trim();
-                                        if (description.length() > 60) {
-                                            description = description.substring(0, 60) + "...";
+
+                                    // 尝试解析 YAML frontmatter 格式
+                                    // 格式: ---\ndescription: 描述内容\n---
+                                    if (content.startsWith("---")) {
+                                        int endIndex = content.indexOf("---", 3);
+                                        if (endIndex > 3) {
+                                            String frontmatter = content.substring(3, endIndex);
+                                            // 查找 description: 字段
+                                            java.util.regex.Pattern descPattern = java.util.regex.Pattern.compile(
+                                                "description:\\s*(.+?)(?:\n|$)",
+                                                java.util.regex.Pattern.CASE_INSENSITIVE
+                                            );
+                                            java.util.regex.Matcher matcher = descPattern.matcher(frontmatter);
+                                            if (matcher.find()) {
+                                                description = matcher.group(1).trim();
+                                                // 去掉可能的引号
+                                                if ((description.startsWith("\"") && description.endsWith("\"")) ||
+                                                    (description.startsWith("'") && description.endsWith("'"))) {
+                                                    description = description.substring(1, description.length() - 1);
+                                                }
+                                            }
                                         }
+                                    }
+
+                                    // 如果没有从 frontmatter 获取到描述，尝试取第一个非空行
+                                    if (description.isEmpty()) {
+                                        String[] lines = content.split("\n");
+                                        for (String line : lines) {
+                                            String trimmed = line.trim();
+                                            // 跳过空行和 frontmatter 分隔符
+                                            if (trimmed.isEmpty() || trimmed.equals("---")) continue;
+                                            // 跳过 frontmatter 内容行
+                                            if (trimmed.matches("^[a-zA-Z_-]+:.*")) continue;
+                                            // 去掉 markdown 标记
+                                            description = trimmed
+                                                .replaceAll("^#+\\s*", "")
+                                                .replaceAll("^\\*+\\s*", "")
+                                                .trim();
+                                            if (!description.isEmpty()) break;
+                                        }
+                                    }
+
+                                    // 截断过长的描述
+                                    if (description.length() > 60) {
+                                        description = description.substring(0, 60) + "...";
                                     }
 
                                     JsonObject cmd = new JsonObject();
@@ -2322,6 +2369,73 @@ public class ClaudeSDKToolWindow implements ToolWindowFactory {
             if (lowerName.equals("tsconfig.json") || lowerName.equals("jsconfig.json")) return "json";
 
             return "file";
+        }
+
+        /**
+         * 获取 MCP 服务器列表
+         */
+        private void handleGetMCPServers() {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    String projectPath = project.getBasePath();
+                    String mcpJson = configReader.getMCPServersAsJson(projectPath);
+
+                    System.out.println("[Backend] MCP 服务器配置: " + mcpJson.substring(0, Math.min(200, mcpJson.length())) + "...");
+
+                    SwingUtilities.invokeLater(() -> {
+                        String js = "if (window.updateMCPServers) { window.updateMCPServers('" +
+                            escapeJs(mcpJson) + "'); }";
+                        browser.getCefBrowser().executeJavaScript(js, browser.getCefBrowser().getURL(), 0);
+                    });
+
+                } catch (Exception e) {
+                    System.err.println("[Backend] 获取 MCP 服务器失败: " + e.getMessage());
+                    e.printStackTrace();
+                    SwingUtilities.invokeLater(() -> {
+                        callJavaScript("updateStatus", escapeJs("获取 MCP 配置失败: " + e.getMessage()));
+                    });
+                }
+            });
+        }
+
+        /**
+         * 切换 MCP 服务器启用/禁用状态
+         */
+        private void handleToggleMCPServer(String content) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    Gson gson = new Gson();
+                    JsonObject data = gson.fromJson(content, JsonObject.class);
+
+                    String serverName = data.get("serverName").getAsString();
+                    boolean enable = data.get("enable").getAsBoolean();
+                    String projectPath = project.getBasePath();
+
+                    System.out.println("[Backend] 切换 MCP 服务器: " + serverName + " -> " + (enable ? "启用" : "禁用"));
+
+                    boolean success = configReader.toggleMCPServer(serverName, projectPath, enable);
+
+                    if (success) {
+                        // 刷新 MCP 服务器列表
+                        handleGetMCPServers();
+
+                        SwingUtilities.invokeLater(() -> {
+                            callJavaScript("updateStatus", escapeJs("MCP 服务器 " + serverName + " 已" + (enable ? "启用" : "禁用")));
+                        });
+                    } else {
+                        SwingUtilities.invokeLater(() -> {
+                            callJavaScript("updateStatus", escapeJs("切换 MCP 服务器状态失败"));
+                        });
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("[Backend] 切换 MCP 服务器状态失败: " + e.getMessage());
+                    e.printStackTrace();
+                    SwingUtilities.invokeLater(() -> {
+                        callJavaScript("updateStatus", escapeJs("操作失败: " + e.getMessage()));
+                    });
+                }
+            });
         }
 
         public JPanel getContent() {
