@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MarkdownBlock from './components/MarkdownBlock';
+import StreamingText, { clearAllStreamingState } from './components/StreamingText';
 import UserMessageContent from './components/messages/UserMessageContent';
 import HistoryView from './components/history/HistoryView';
 import SettingsView from './components/SettingsView';
@@ -75,6 +76,24 @@ const App = () => {
     window.updateMessages = (json) => {
       try {
         const parsed = JSON.parse(json) as ClaudeMessage[];
+
+        // 详细日志：打印所有 user 类型消息的完整结构
+        console.log('[updateMessages] Received', parsed.length, 'messages');
+        parsed.forEach((msg, idx) => {
+          if (msg.type === 'user' && msg.raw && typeof msg.raw !== 'string') {
+            const rawObj = msg.raw;
+            console.log(`[updateMessages] USER message ${idx}:`, {
+              hasRaw: true,
+              rawKeys: Object.keys(rawObj),
+              hasRawMessage: rawObj.message !== undefined,
+              rawMessageKeys: rawObj.message ? Object.keys(rawObj.message) : [],
+              rawMessageContentIsArray: Array.isArray(rawObj.message?.content),
+              rawContentIsArray: Array.isArray((rawObj as Record<string, unknown>).content),
+            });
+            console.log(`[updateMessages] USER message ${idx} raw:`, JSON.stringify(rawObj).substring(0, 800));
+          }
+        });
+
         setMessages(parsed);
       } catch (error) {
         console.error('[Frontend] Failed to parse messages:', error);
@@ -84,7 +103,10 @@ const App = () => {
     window.updateStatus = (text) => setStatus(text);
     window.showLoading = (value) => setLoading(isTruthy(value));
     window.setHistoryData = (data) => setHistoryData(data);
-    window.clearMessages = () => setMessages([]);
+    window.clearMessages = () => {
+      setMessages([]);
+      clearAllStreamingState();
+    };
     window.addErrorMessage = (message) =>
       setMessages((prev) => [...prev, { type: 'error', content: message }]);
 
@@ -361,6 +383,7 @@ const App = () => {
         case 'reset':
         case 'new':
           setMessages([]);
+          clearAllStreamingState();
           setStatus('对话已清空');
           break;
         case 'compact':
@@ -481,6 +504,7 @@ const App = () => {
     setShowNewSessionConfirm(false);
     sendBridgeMessage('create_new_session');
     setMessages([]);
+    clearAllStreamingState();
     setStatus('正在创建新会话...');
   };
 
@@ -563,7 +587,7 @@ const App = () => {
     }
     const buildBlocksFromArray = (entries: unknown[]): ClaudeContentBlock[] => {
       const blocks: ClaudeContentBlock[] = [];
-      entries.forEach((entry) => {
+      entries.forEach((entry, entryIndex) => {
         if (!entry || typeof entry !== 'object') {
           return;
         }
@@ -587,6 +611,12 @@ const App = () => {
             text: thinking,
           });
         } else if (type === 'tool_use') {
+          // Debug: 打印 tool_use 块的完整信息
+          console.log(`[normalizeBlocks] tool_use block #${entryIndex}:`, {
+            id: candidate.id,
+            name: candidate.name,
+            hasInput: !!candidate.input,
+          });
           blocks.push({
             type: 'tool_use',
             id: typeof candidate.id === 'string' ? candidate.id : undefined,
@@ -631,11 +661,18 @@ const App = () => {
   };
 
   const findToolResult = (toolUseId?: string, messageIndex?: number): ToolResultBlock | null => {
-    if (!toolUseId || typeof messageIndex !== 'number') {
+    if (!toolUseId) {
+      console.log('[findToolResult] Missing toolUseId:', { toolUseId, messageIndex });
       return null;
     }
-    for (let i = messageIndex + 1; i < messages.length; i += 1) {
+
+    console.log('[findToolResult] Searching for toolUseId:', toolUseId, 'starting from index:', messageIndex);
+    console.log('[findToolResult] Total messages:', messages.length);
+
+    // 搜索所有用户消息
+    for (let i = 0; i < messages.length; i += 1) {
       const candidate = messages[i];
+
       if (candidate.type !== 'user') {
         continue;
       }
@@ -643,19 +680,47 @@ const App = () => {
       if (!raw || typeof raw === 'string') {
         continue;
       }
-      // 修复：同时检查 raw.message.content 和 raw.content
-      const content = raw.message?.content ?? raw.content;
-      if (!Array.isArray(content)) {
-        continue;
+
+      // 获取 tool_use_result 字段（实际的结果数据）
+      const toolUseResult = (raw as Record<string, unknown>).tool_use_result as Record<string, unknown> | undefined;
+
+      // 检查 raw.message.content 中是否有匹配的 tool_result 块
+      let content: unknown[] | undefined;
+      if (raw.message && Array.isArray(raw.message.content)) {
+        content = raw.message.content;
+      } else if (Array.isArray((raw as Record<string, unknown>).content)) {
+        content = (raw as Record<string, unknown>).content as unknown[];
       }
-      const resultBlock = content.find(
-        (block): block is ToolResultBlock =>
-          Boolean(block) && block.type === 'tool_result' && block.tool_use_id === toolUseId,
-      );
-      if (resultBlock) {
-        return resultBlock;
+
+      if (content) {
+        for (const block of content) {
+          if (!block || typeof block !== 'object') continue;
+          const blockObj = block as Record<string, unknown>;
+
+          // 找到匹配的 tool_result 块
+          if (blockObj.type === 'tool_result' && blockObj.tool_use_id === toolUseId) {
+            console.log(`[findToolResult] Message ${i}: found matching tool_result in content`);
+
+            // 优先返回 tool_use_result 字段（包含更详细的结果数据）
+            if (toolUseResult && typeof toolUseResult === 'object') {
+              console.log('[findToolResult] Returning tool_use_result field:', JSON.stringify(toolUseResult).substring(0, 200));
+              // 合并 tool_use_id 到结果中
+              return {
+                ...toolUseResult,
+                tool_use_id: toolUseId,
+                content: blockObj.content, // 保留原始 content 作为后备
+              } as unknown as ToolResultBlock;
+            }
+
+            // 后备：返回 content 块本身
+            console.log('[findToolResult] Returning content block');
+            return blockObj as unknown as ToolResultBlock;
+          }
+        }
       }
     }
+
+    console.log('[findToolResult] No result found for toolUseId:', toolUseId);
     return null;
   };
 
@@ -822,7 +887,15 @@ const App = () => {
                   ) : (
                     getContentBlocks(message).map((block, blockIndex) => (
                       <div key={`${messageIndex}-${blockIndex}`} className="content-block">
-                        {block.type === 'text' && <MarkdownBlock content={block.text ?? ''} />}
+                        {block.type === 'text' && (
+                          <StreamingText
+                            content={block.text ?? ''}
+                            blockId={`msg_${messageIndex}_block_${blockIndex}`}
+                            speed={15}
+                            smartPause={true}
+                            showCursor={loading}
+                          />
+                        )}
 
                         {block.type === 'thinking' && (
                           <div className="thinking-block">
@@ -875,17 +948,56 @@ const App = () => {
 
                               // Glob/Grep -> SearchBlock
                               if (toolName === 'glob' || toolName === 'grep') {
+                                // Debug: 打印 SearchBlock 渲染信息
+                                console.log(`[SearchBlock] Rendering for ${toolName}:`, {
+                                  blockId: block.id,
+                                  messageIndex,
+                                  hasInput: !!block.input,
+                                });
+                                const toolResult = findToolResult(block.id, messageIndex);
+                                console.log(`[SearchBlock] findToolResult returned:`, toolResult);
                                 return (
                                   <SearchBlock
                                     input={block.input}
                                     toolName={block.name}
-                                    result={findToolResult(block.id, messageIndex)}
+                                    result={toolResult}
                                   />
                                 );
                               }
 
-                              // Bash -> 隐藏（不显示）
+                              // Bash -> 检查是否为 find 命令（文件搜索）
                               if (toolName === 'bash') {
+                                const command = (block.input?.command as string) || '';
+                                // 判断是否为文件搜索命令
+                                const isFindCommand = command.trim().startsWith('find ') ||
+                                                      command.includes(' find ');
+                                if (isFindCommand) {
+                                  // 从 find 命令中提取搜索模式
+                                  const nameMatch = command.match(/-name\s+["']?([^"'\s]+)["']?/);
+                                  const searchPattern = nameMatch ? nameMatch[1] : command;
+
+                                  console.log(`[SearchBlock] Bash find command detected:`, {
+                                    command,
+                                    searchPattern,
+                                    blockId: block.id,
+                                  });
+
+                                  const toolResult = findToolResult(block.id, messageIndex);
+                                  // 将 Bash 输出转换为 SearchBlock 可用的格式
+                                  const bashInput = {
+                                    pattern: searchPattern,
+                                    command: command,
+                                  };
+
+                                  return (
+                                    <SearchBlock
+                                      input={bashInput}
+                                      toolName="Bash"
+                                      result={toolResult}
+                                    />
+                                  );
+                                }
+                                // 非 find 命令的 Bash 仍然隐藏
                                 return null;
                               }
 

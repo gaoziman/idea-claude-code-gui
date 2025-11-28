@@ -13,59 +13,119 @@ interface SearchBlockProps {
   result?: ToolResultBlock | null;
 }
 
-// 获取文件类型图标和颜色
+// 获取文件类型图标和颜色 - Trae 风格简洁配色
 const getFileTypeIcon = (fileName: string): { icon: string; color: string } => {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
 
   switch (ext) {
     case 'java':
-      return { icon: '☕', color: '#f89820' };
+      return { icon: 'J', color: '#e57373' }; // 柔和红色
     case 'js':
-      return { icon: 'JS', color: '#f7df1e' };
+      return { icon: 'JS', color: '#ffd54f' }; // 柔和黄色
     case 'ts':
-      return { icon: 'TS', color: '#3178c6' };
+      return { icon: 'TS', color: '#64b5f6' }; // 柔和蓝色
     case 'tsx':
-      return { icon: 'TX', color: '#3178c6' };
+      return { icon: 'TX', color: '#64b5f6' };
     case 'jsx':
-      return { icon: 'JX', color: '#61dafb' };
+      return { icon: 'JX', color: '#4dd0e1' };
     case 'vue':
-      return { icon: 'V', color: '#42b883' };
+      return { icon: 'V', color: '#81c784' }; // 柔和绿色
     case 'xml':
-      return { icon: '<>', color: '#a78bfa' };
+      return { icon: 'X', color: '#ce93d8' }; // 柔和紫色
     case 'yml':
     case 'yaml':
-      return { icon: '⚙', color: '#858585' };
+      return { icon: 'Y', color: '#90a4ae' }; // 灰色
     case 'json':
-      return { icon: '{}', color: '#f7df1e' };
+      return { icon: '{ }', color: '#ffd54f' };
     case 'md':
-      return { icon: 'M', color: '#4a90e2' };
+      return { icon: 'M', color: '#90a4ae' };
     case 'css':
-      return { icon: '#', color: '#264de4' };
+      return { icon: '#', color: '#64b5f6' };
+    case 'scss':
+    case 'sass':
+      return { icon: 'S', color: '#f48fb1' };
     case 'html':
-      return { icon: '<>', color: '#e34c26' };
+      return { icon: 'H', color: '#ffb74d' };
     case 'sql':
-      return { icon: 'DB', color: '#336791' };
+      return { icon: 'DB', color: '#90a4ae' };
     case 'py':
-      return { icon: '🐍', color: '#3776ab' };
+      return { icon: 'Py', color: '#ffd54f' };
+    case 'go':
+      return { icon: 'Go', color: '#4dd0e1' };
+    case 'rs':
+      return { icon: 'Rs', color: '#ffb74d' };
+    case 'kt':
+      return { icon: 'Kt', color: '#ce93d8' };
+    case 'swift':
+      return { icon: 'Sw', color: '#ffb74d' };
+    case 'rb':
+      return { icon: 'Rb', color: '#e57373' };
+    case 'php':
+      return { icon: 'P', color: '#9fa8da' };
+    case 'c':
+      return { icon: 'C', color: '#90a4ae' };
+    case 'cpp':
+    case 'cc':
+      return { icon: 'C+', color: '#64b5f6' };
+    case 'h':
+    case 'hpp':
+      return { icon: 'H', color: '#90a4ae' };
+    case 'sh':
+    case 'bash':
+      return { icon: '$', color: '#81c784' };
     default:
-      return { icon: '📄', color: '#858585' };
+      return { icon: 'F', color: '#78909c' }; // 默认灰色
   }
 };
 
 // 解析搜索结果，提取文件列表
-const parseSearchResults = (result?: ToolResultBlock | null): Array<{ path: string; lines?: string }> => {
-  if (!result?.content) {
+const parseSearchResults = (result?: ToolResultBlock | null, toolName?: string): Array<{ path: string; lines?: string }> => {
+  if (!result) {
     return [];
   }
 
-  const content = typeof result.content === 'string'
-    ? result.content
-    : Array.isArray(result.content)
-      ? result.content.map(c => typeof c === 'string' ? c : c.text || '').join('\n')
+  // Debug: 打印结果结构
+  console.log('[parseSearchResults] Result structure:', {
+    hasContent: 'content' in result,
+    hasFilenames: 'filenames' in result,
+    hasStdout: 'stdout' in result,
+    resultKeys: Object.keys(result),
+    toolName,
+  });
+
+  // 优先使用 filenames 数组（SDK Glob 格式）
+  const filenames = (result as Record<string, unknown>).filenames as string[] | undefined;
+  if (Array.isArray(filenames) && filenames.length > 0) {
+    console.log('[parseSearchResults] Using filenames array:', filenames.length, 'files');
+    return filenames.slice(0, 20).map(path => ({ path }));
+  }
+
+  // 检查 stdout（Bash 工具格式）
+  const stdout = (result as Record<string, unknown>).stdout as string | undefined;
+  if (stdout && typeof stdout === 'string') {
+    console.log('[parseSearchResults] Using stdout (Bash format):', stdout.substring(0, 200));
+    return parseBashOutput(stdout);
+  }
+
+  // 后备：解析 content 字符串
+  const content = result.content;
+  if (!content) {
+    return [];
+  }
+
+  const contentStr = typeof content === 'string'
+    ? content
+    : Array.isArray(content)
+      ? content.map(c => typeof c === 'string' ? c : (c as { text?: string }).text || '').join('\n')
       : '';
 
+  // 如果是 Bash 工具，使用 Bash 输出解析器
+  if (toolName?.toLowerCase() === 'bash') {
+    return parseBashOutput(contentStr);
+  }
+
   const files: Array<{ path: string; lines?: string }> = [];
-  const lines = content.split('\n');
+  const lines = contentStr.split('\n');
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -83,11 +143,48 @@ const parseSearchResults = (result?: ToolResultBlock | null): Array<{ path: stri
     }
   }
 
-  return files.slice(0, 10); // 最多显示10个结果
+  return files.slice(0, 20); // 最多显示20个结果
+};
+
+// 解析 Bash find 命令的输出
+const parseBashOutput = (output: string): Array<{ path: string; lines?: string }> => {
+  const files: Array<{ path: string; lines?: string }> = [];
+  const lines = output.split('\n');
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // 跳过错误信息和非文件路径行
+    if (trimmed.startsWith('find:') || trimmed.startsWith('Permission denied')) continue;
+
+    // 匹配文件路径（以 .扩展名 结尾或包含路径分隔符）
+    // 格式: ./path/to/file.java 或 path/to/file.java
+    if (trimmed.match(/\.[a-zA-Z0-9]+$/) || trimmed.includes('/')) {
+      // 确保看起来像是文件路径
+      if (!trimmed.includes(' ') || trimmed.startsWith('./') || trimmed.startsWith('/')) {
+        files.push({
+          path: trimmed.replace(/^\.\//, ''), // 移除开头的 ./
+        });
+      }
+    }
+  }
+
+  console.log('[parseBashOutput] Parsed files:', files.length);
+  return files.slice(0, 20);
 };
 
 const SearchBlock = ({ input, toolName, result }: SearchBlockProps) => {
   const [expanded, setExpanded] = useState(false);
+
+  // Debug: 打印 SearchBlock 接收到的 props
+  console.log('[SearchBlock] Component rendered:', {
+    hasInput: !!input,
+    toolName,
+    hasResult: !!result,
+    resultContent: result?.content,
+    resultType: typeof result?.content,
+  });
 
   if (!input) {
     return null;
@@ -107,7 +204,7 @@ const SearchBlock = ({ input, toolName, result }: SearchBlockProps) => {
     : `'${pattern}'`;
 
   // 解析搜索结果
-  const searchResults = parseSearchResults(result);
+  const searchResults = parseSearchResults(result, toolName);
   const hasResults = searchResults.length > 0;
 
   // 处理文件点击
